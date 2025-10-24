@@ -6,6 +6,7 @@ from transformers import AutoTokenizer
 from sklearn.model_selection import train_test_split
 from datahelper import AmazonReviewDataset, filter_valid_rows
 from model import CAMRec, collate_fn
+from pathlib import Path
 
 
 def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patience=5, heads=4, device='cuda'):
@@ -18,9 +19,33 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
     tok = AutoTokenizer.from_pretrained('roberta-base')
 
     if df is None:
-        train_df = pd.read_csv("data/amazon product/train.csv")
-        val_df = pd.read_csv("data/amazon product/val.csv")
-        test_df = pd.read_csv("data/amazon product/test.csv")
+        # Resolve data directory relative to this script and support two common names
+        base_dir = Path(__file__).parent
+        candidates = [
+            base_dir / "data" / "amazon product",
+            base_dir / "data" / "amazon_product",
+            base_dir / "data"  # fallback if CSVs are directly under data/
+        ]
+        data_dir = None
+        for c in candidates:
+            if c.exists():
+                # if c is a directory and contains train.csv, accept it
+                if c.is_dir() and (c / "train.csv").exists():
+                    data_dir = c
+                    break
+                # or if c is a file path (unlikely), accept parent
+                if c.is_file() and c.name.endswith(".csv"):
+                    data_dir = c.parent
+                    break
+        if data_dir is None:
+            raise FileNotFoundError(
+                "Could not find data folder or train.csv. "
+                f"Tried: {[str(p) for p in candidates]}"
+            )
+
+        train_df = pd.read_csv(data_dir / "train.csv")
+        val_df = pd.read_csv(data_dir / "val.csv")
+        test_df = pd.read_csv(data_dir / "test.csv")
 
         df = pd.concat([train_df, val_df, test_df], ignore_index=True)
         users = {u:i for i,u in enumerate(df['reviewerID'].astype(str).unique())}
