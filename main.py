@@ -23,6 +23,6 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--heads", type=int, default=4)
-    parser.add_argument("--data_path", type=str, default="/kaggle/input/amazon-product/")
+    parser.add_argument("--data_path", type=str, default=None, help="Path to the CSV file containing the dataset")
     args = parser.parse_args()
     main(args)
