@@ -12,11 +12,7 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
     best_val = float('inf') 
     best_state = None 
     bad = 0 
-    df = filter_valid_rows(df)
-
-    users = {u:i for i,u in enumerate(df['reviewerID'].astype(str).unique())}
-    items = {a:i for i,a in enumerate(df['asin'].astype(str).unique())}
-
+    
     
 
     tok = AutoTokenizer.from_pretrained('roberta-base')
@@ -25,9 +21,19 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
         train_df = pd.read_csv("data/amazon product/train.csv")
         val_df = pd.read_csv("data/amazon product/val.csv")
         test_df = pd.read_csv("data/amazon product/test.csv")
+
+        df = pd.concat([train_df, val_df, test_df], ignore_index=True)
+        users = {u:i for i,u in enumerate(df['reviewerID'].astype(str).unique())}
+        items = {a:i for i,a in enumerate(df['asin'].astype(str).unique())}
     else:
+        df = filter_valid_rows(df)
+
+        users = {u:i for i,u in enumerate(df['reviewerID'].astype(str).unique())}
+        items = {a:i for i,a in enumerate(df['asin'].astype(str).unique())}
+
         train_df, temp_df = train_test_split(df, test_size=0.30, random_state=42, shuffle=True)
         val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=42, shuffle=True)
+
     
 
 
