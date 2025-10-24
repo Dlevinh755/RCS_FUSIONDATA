@@ -1,11 +1,11 @@
 import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModel
+from torch.utils.data import  DataLoader
+from transformers import AutoTokenizer
 from sklearn.model_selection import train_test_split
-from datahelper import collate_fn, AmazonReviewDataset, filter_valid_rows
-from model import CAMRec
+from datahelper import AmazonReviewDataset, filter_valid_rows
+from model import CAMRec, collate_fn
 
 
 def trainmlp(df: pd.DataFrame, batch_size=16, lr=1e-3, epochs=50, patience=5, heads=4, device='cuda'):
