@@ -10,7 +10,7 @@ def main(args):
     review = pd.read_csv("/kaggle/input/amazon-product/reviews.csv")
     df = review.merge(meta, on="asin")
     df["file_path"] = "/kaggle/input/amazon-product/images/"+ df["asin"] +".jpg"
-    model, metrics = trainmlp(df, batch_size=64, lr=1e-3, epochs=20, patience=5, heads=4, device=device)
+    model, metrics = trainmlp(df, batch_size=args.batch_size, lr=args.lr, epochs=args.epochs, patience=args.patience, heads=args.heads, device=device)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
