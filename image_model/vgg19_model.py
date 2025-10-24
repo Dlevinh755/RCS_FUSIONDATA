@@ -10,13 +10,7 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 
 
-IMG_SIZE = 224
-img_tf = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE), antialias=True),
-    transforms.ConvertImageDtype(torch.float),
-    transforms.Lambda(lambda x: x if x.ndim==3 else x.expand(3, *x.shape[1:])),
-    transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
-])
+
 
 class ImageEncoder(nn.Module):
     def __init__(self):

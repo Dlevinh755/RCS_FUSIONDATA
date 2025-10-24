@@ -2,8 +2,17 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import torch
+from torchvision import  transforms
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
+
+IMG_SIZE = 224
+img_tf = transforms.Compose([
+    transforms.Resize((IMG_SIZE, IMG_SIZE), antialias=True),
+    transforms.ConvertImageDtype(torch.float),
+    transforms.Lambda(lambda x: x if x.ndim==3 else x.expand(3, *x.shape[1:])),
+    transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
+])
 
 
 class AmazonReviewDataset(Dataset):
@@ -58,3 +67,4 @@ def filter_valid_rows(df: pd.DataFrame) -> pd.DataFrame:
     # rating phải là số
     df = df[pd.to_numeric(df['overall'], errors='coerce').notnull()]
     return df
+
