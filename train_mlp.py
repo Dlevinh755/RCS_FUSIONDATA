@@ -8,7 +8,7 @@ from datahelper import AmazonReviewDataset, filter_valid_rows
 from model import CAMRec, collate_fn
 
 
-def trainmlp(df: pd.DataFrame, batch_size=16, lr=1e-3, epochs=50, patience=5, heads=4, device='cuda'):
+def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patience=5, heads=4, device='cuda'):
     best_val = float('inf') 
     best_state = None 
     bad = 0 
@@ -17,15 +17,23 @@ def trainmlp(df: pd.DataFrame, batch_size=16, lr=1e-3, epochs=50, patience=5, he
     users = {u:i for i,u in enumerate(df['reviewerID'].astype(str).unique())}
     items = {a:i for i,a in enumerate(df['asin'].astype(str).unique())}
 
-    train_df, temp_df = train_test_split(df, test_size=0.30, random_state=42, shuffle=True)
-    val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=42, shuffle=True)
     
+
     tok = AutoTokenizer.from_pretrained('roberta-base')
+
+    if df is None:
+        train_df = pd.read_csv("data/amazon product/train.csv")
+        val_df = pd.read_csv("data/amazon product/val.csv")
+        test_df = pd.read_csv("data/amazon product/test.csv")
+    else:
+        train_df, temp_df = train_test_split(df, test_size=0.30, random_state=42, shuffle=True)
+        val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=42, shuffle=True)
     
+
+
     train_ds = AmazonReviewDataset(train_df, users, items, tok, max_len=128)
     val_ds   = AmazonReviewDataset(val_df,   users, items, tok, max_len=128)
     test_ds  = AmazonReviewDataset(test_df,  users, items, tok, max_len=128)
-
     train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=2)
     val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=2)
     test_dl  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=2)
