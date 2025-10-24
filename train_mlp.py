@@ -37,11 +37,7 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
                 if c.is_file() and c.name.endswith(".csv"):
                     data_dir = c.parent
                     break
-        if data_dir is None:
-            raise FileNotFoundError(
-                "Could not find data folder or train.csv. "
-                f"Tried: {[str(p) for p in candidates]}"
-            )
+
 
         train_df = pd.read_csv(data_dir / "train.csv")
         val_df = pd.read_csv(data_dir / "val.csv")
@@ -84,7 +80,7 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
         for batch in progress_bar:
             for k in batch:
                 batch[k] = batch[k].to(device)
-                
+    
             optim.zero_grad()
             yhat = model(batch)
             loss = loss_fn(yhat, batch['rating'])
