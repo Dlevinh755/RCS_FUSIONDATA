@@ -25,6 +25,7 @@ class AmazonReviewDataset(Dataset):
     def _load_image_tensor(self, file_path: str) -> torch.Tensor:
         path = str(file_path).strip()
         if not Path(path).exists():
+            print(f"Image not found: {path}")
             return torch.zeros(3, IMG_SIZE, IMG_SIZE)
         try:
             with Image.open(path).convert('RGB') as im:
