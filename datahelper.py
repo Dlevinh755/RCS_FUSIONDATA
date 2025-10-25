@@ -1,9 +1,8 @@
 import pandas as pd
-import numpy as np
 from pathlib import Path
 import torch
 from torchvision import transforms
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from PIL import Image
 
 IMG_SIZE = 224
