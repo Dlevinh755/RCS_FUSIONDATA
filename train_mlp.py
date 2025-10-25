@@ -24,7 +24,7 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
         candidates = [
             base_dir / "data" / "amazon product",
             base_dir / "data" / "amazon_product",
-            base_dir / "data"  # fallback if CSVs are directly under data/
+            base_dir / "data" / "amazonproduct",
         ]
         data_dir = None
         for c in candidates:
