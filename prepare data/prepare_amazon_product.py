@@ -138,7 +138,7 @@ def sample_like_dcares(
     return out
 
 def down_load_img(temp): 
-    output_dir = 'data/amazon product/images/'
+    output_dir = 'data/amazon_product/images/'
     os.makedirs(output_dir, exist_ok=True)
     # minimal feedback
     if os.path.exists(output_dir):
@@ -165,7 +165,7 @@ def down_load_img(temp):
 
 def main(args):
     mode = args.mode
-    data_dir = "data/amazon product"
+    data_dir = "data/amazon_product"
     os.makedirs(data_dir, exist_ok=True)
     urls = [args.reviews_link, args.meta_link]
     outs = [os.path.join(data_dir, "reviews.json.gz"), os.path.join(data_dir, "metadata.json.gz")]
@@ -223,7 +223,7 @@ def main(args):
     sucess = down_load_img(test)
     test["sucess"] = sucess
     meta_out = test[test["sucess"] == 1]
-    meta_out[["asin","title", "price","cat_label", "categories","description","imUrl"]].to_csv("data/amazon product/meta.csv", index = False)
+    meta_out[["asin","title", "price","cat_label", "categories","description","imUrl"]].to_csv("data/amazon_product/meta.csv", index = False)
 
     df_reviews = reviews
     assert "asin" in meta_out.columns, "df_meta phải có cột 'asin'"
@@ -240,17 +240,17 @@ def main(args):
 
     df_reviews_filtered = df_reviews_filtered.drop_duplicates(subset=["reviewerID", "asin"])
     df_reviews_filtered = df_reviews_filtered[df_reviews_filtered["overall"].between(1,5)]
-    df_reviews_filtered.to_csv("data/amazon product/reviews.csv", index = False)
+    df_reviews_filtered.to_csv("data/amazon_product/reviews.csv", index = False)
 
 
     df = df_reviews_filtered.merge(meta_out, on="asin")
-    df["file_path"] = "data/amazon product/images/"+ df["asin"] +".jpg"
+    df["file_path"] = "data/amazon_product/images/"+ df["asin"] +".jpg"
     train_df, temp_df = train_test_split(df, test_size=0.30, random_state=42, shuffle=True)
     val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=42, shuffle=True)
 
-    train_df.to_csv("data/amazon product/train.csv", index=False)
-    val_df.to_csv("data/amazon product/val.csv", index=False)
-    test_df.to_csv("data/amazon product/test.csv", index=False)
+    train_df.to_csv("data/amazon_product/train.csv", index=False)
+    val_df.to_csv("data/amazon_product/val.csv", index=False)
+    test_df.to_csv("data/amazon_product/test.csv", index=False)
 
 
 if __name__ == "__main__":
