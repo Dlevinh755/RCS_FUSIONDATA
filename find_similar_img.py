@@ -136,7 +136,8 @@ def main(args):
     print(f"Sử dụng device: {device}")
     print(f"\nĐọc dữ liệu từ: {args.df_path}")
     df = pd.read_csv(args.df_path)
-    df['file_path'] = df['file_path']    
+    data_path = Path(args.data_path)
+    df['file_path'] = df['file_path'].apply(lambda x: str(data_path / x))
     print(f"Số lượng records: {len(df)}")
     print(f"Các cột: {df.columns.tolist()}")
 

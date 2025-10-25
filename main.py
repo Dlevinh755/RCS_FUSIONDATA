@@ -1,6 +1,7 @@
 import torch
 import argparse
 import pandas as pd
+from pathlib import Path
 from train_mlp import trainmlp
 
 
@@ -8,8 +9,11 @@ def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     if args.data_path:
-        df = pd.read_csv(args.data_path)
-        df["file_path"] = args.data_path + "images/" + df["asin"] + ".jpg"
+        data_path = Path(args.data_path)
+        df = pd.read_csv(data_path / "train.csv")
+        
+        # Tạo đường dẫn tuyệt đối cho file ảnh
+        df["file_path"] = df["asin"].apply(lambda x: str(data_path / "images" / f"{x}.jpg"))
     else:
         df = None
     model, metrics = trainmlp(df, batch_size=args.batch_size, lr=args.lr, epochs=args.epochs, patience=args.patience, heads=args.heads, device=device)
@@ -23,6 +27,6 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--heads", type=int, default=4)
-    parser.add_argument("--data_path", type=str, default=None, help="Path to the CSV file containing the dataset")
+    parser.add_argument("--data_path", type=str, default=None, help="Path to the directory containing train.csv and images/")
     args = parser.parse_args()
     main(args)
