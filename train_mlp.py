@@ -69,7 +69,7 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
     model.text_enc.eval()
     model.img_enc.eval()
     optim = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr)
-    loss_fn = nn.RMSELoss()
+    loss_fn = nn.MSELoss()
     from tqdm.auto import tqdm
     
     for ep in range(epochs):
