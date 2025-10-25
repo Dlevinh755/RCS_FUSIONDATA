@@ -40,11 +40,11 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
 
 
         train_df = pd.read_csv(data_dir / "train.csv")
-        train_df["file_path"] = train_df["file_path"].apply(lambda x: str(data_dir / x))
+        train_df["file_path"] = train_df["file_path"].apply(lambda x: str(base_dir / x))
         val_df = pd.read_csv(data_dir / "val.csv")
-        val_df["file_path"] = val_df["file_path"].apply(lambda x: str(data_dir / x))
+        val_df["file_path"] = val_df["file_path"].apply(lambda x: str(base_dir / x))
         test_df = pd.read_csv(data_dir / "test.csv")
-        test_df["file_path"] = test_df["file_path"].apply(lambda x: str(data_dir / x))
+        test_df["file_path"] = test_df["file_path"].apply(lambda x: str(base_dir / x))
 
         df = pd.concat([train_df, val_df, test_df], ignore_index=True)
         users = {u:i for i,u in enumerate(df['reviewerID'].astype(str).unique())}
