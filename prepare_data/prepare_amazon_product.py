@@ -8,19 +8,33 @@ from collections import Counter
 import math
 import numpy as np
 from sklearn.model_selection import train_test_split
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def download_gz(url, out_path):
     try:
+        logger.info(f"Downloading from {url}...")
         with requests.get(url, stream=True, timeout=60) as r:
             r.raise_for_status()
             with open(out_path, "wb") as f:
                 shutil.copyfileobj(r.raw, f, length=1<<20)
-        print("Saved:", out_path)
+        logger.info(f"Saved: {out_path}")
+        return True
     except requests.RequestException as e:
-        print("Download error:", e)
+        logger.error(f"Download error: {e}")
+        return False
 
 def read_jsonlines_robust(path_gz, limit=None):
+    """Read JSON lines from gzipped file with robust error handling."""
+    if not os.path.exists(path_gz):
+        logger.error(f"File not found: {path_gz}")
+        return pd.DataFrame()
+    
     rows = []
+    skipped = 0
     with gzip.open(path_gz, 'rt', encoding='utf-8', errors='replace') as f:
         for i, line in enumerate(f):
             s = line.strip()
@@ -30,15 +44,21 @@ def read_jsonlines_robust(path_gz, limit=None):
                 obj = json.loads(s)          # JSON chuẩn
             except json.JSONDecodeError:
                 try:
-                    obj = ast.literal_eval(s)  # “Python literal” kiểu UCSD
-                except Exception:
+                    obj = ast.literal_eval(s)  # "Python literal" kiểu UCSD
+                except Exception as e:
+                    skipped += 1
                     continue                  # bỏ qua dòng hỏng
             rows.append(obj)
             if limit and len(rows) >= limit:
                 break
+    
+    if skipped > 0:
+        logger.warning(f"Skipped {skipped} malformed lines in {path_gz}")
+    logger.info(f"Read {len(rows)} records from {path_gz}")
     return pd.DataFrame(rows)
 
 def flatten_categories(cat_col):
+    """Flatten nested category lists."""
     if not isinstance(cat_col, list):
         return []
     flat = []
@@ -47,18 +67,20 @@ def flatten_categories(cat_col):
             flat.extend(c)
         else:
             flat.append(c)
-    return [x.strip() for x in flat]
+    return [str(x).strip() for x in flat if x]  # Convert to string and filter empty
     
-
 def assign_label(cats):
+    """Assign category label based on hierarchy."""
     if not isinstance(cats, list):
         return None
     # flatten
     cats_flat = []
     for c in cats:
-        if isinstance(c, list): cats_flat.extend(c)
-        else: cats_flat.append(c)
-    cats_flat_lower = [c.lower() for c in cats_flat]
+        if isinstance(c, list): 
+            cats_flat.extend(c)
+        else: 
+            cats_flat.append(c)
+    cats_flat_lower = [str(c).lower() for c in cats_flat]
 
     # ưu tiên cụ thể hơn trước
     if "watches" in cats_flat_lower:
@@ -75,10 +97,12 @@ def sample_like_dcares(
     df, label_col="_label", mode="ratio", seed=42,
     fixed_targets=None, ratios=None, label_map=None
 ):
-    # fixed_targets, ratios, label_map should be passed in at call time to avoid
-    # referencing globals that may not be defined at function-definition time.
+    """Sample data based on ratio or fixed targets."""
     if fixed_targets is None:
         fixed_targets = {"men":1200, "women":1500, "shoes":1200, "watches":995}
+    if label_map is None:
+        raise ValueError("label_map must be provided")
+        
     rng = np.random.RandomState(seed)
     avail = df[label_col].value_counts().to_dict()
 
@@ -122,91 +146,134 @@ def sample_like_dcares(
             parts.append(sub)
         else:
             parts.append(sub.sample(n=n, random_state=seed))
+    
+    if not parts:
+        logger.warning("No data sampled!")
+        return pd.DataFrame()
+        
     out = pd.concat(parts, axis=0).sample(frac=1.0, random_state=seed).reset_index(drop=True)
 
-
-    print("===> Sampling mode:", mode)
-    print("Available:", avail)
-    print("Targets:", targets, "| Total:", sum(targets.values()))
-    print("Result distribution:")
-    print(out[label_col].value_counts())
-    if label_map is None:
-        raise ValueError("label_map must be provided")
+    logger.info(f"===> Sampling mode: {mode}")
+    logger.info(f"Available: {avail}")
+    logger.info(f"Targets: {targets} | Total: {sum(targets.values())}")
+    logger.info("Result distribution:")
+    logger.info(f"\n{out[label_col].value_counts()}")
+    
     inv_map = {v:k for k,v in label_map.items()}
     out["cat_label"] = out[label_col].map(inv_map)
     out = out.drop(columns=[label_col])
     return out
 
-def down_load_img(temp): 
-    output_dir = 'data/amazon_product/images/'
+def download_images(df, output_dir='data/amazon_product/images/'): 
+    """Download images from URLs in dataframe."""
     os.makedirs(output_dir, exist_ok=True)
-    # minimal feedback
-    if os.path.exists(output_dir):
-        print("Images dir:", output_dir)
+    logger.info(f"Images directory: {output_dir}")
          
     cnt = 0
-    sucess = []
-    for i, row in temp.iterrows():
+    success = []
+    
+    for i, row in df.iterrows():
         try:
-            img_id   = row['asin']
-            img_url  = row['imUrl']
-            response = requests.get(img_url)
+            img_id = row['asin']
+            img_url = row['imUrl']
+            
+            if pd.isna(img_url) or not str(img_url).startswith('http'):
+                success.append(0)
+                continue
+                
+            response = requests.get(img_url, timeout=10)
+            response.raise_for_status()
+            
             img = Image.open(BytesIO(response.content))
-            img.save(f"{output_dir}/{img_id}.jpg")
+            # Validate image
+            img.verify()
+            # Reopen after verify
+            img = Image.open(BytesIO(response.content))
+            
+            img_path = os.path.join(output_dir, f"{img_id}.jpg")
+            img.save(img_path)
             cnt += 1
-            sucess.append(1)
-            if cnt%100 ==0:
-                print(f"Tải {cnt} ảnh thành công")
-        except:
-            sucess.append(0)
-            pass
-    return sucess
+            success.append(1)
+            
+            if cnt % 100 == 0:
+                logger.info(f"Downloaded {cnt} images successfully")
+                
+        except Exception as e:
+            logger.debug(f"Failed to download image for {row.get('asin', 'unknown')}: {str(e)}")
+            success.append(0)
+    
+    logger.info(f"Total images downloaded: {cnt}/{len(df)}")
+    return success
 
 
 def main(args):
     mode = args.mode
     data_dir = "data/amazon_product"
     os.makedirs(data_dir, exist_ok=True)
+    
+    # Download files
     urls = [args.reviews_link, args.meta_link]
     outs = [os.path.join(data_dir, "reviews.json.gz"), os.path.join(data_dir, "metadata.json.gz")]
 
     for u, o in zip(urls, outs):
-        download_gz(u, o)
+        if not os.path.exists(o):
+            success = download_gz(u, o)
+            if not success:
+                logger.error(f"Failed to download {u}")
+                return
+        else:
+            logger.info(f"File already exists: {o}")
 
+    # Read data
+    logger.info("Reading metadata...")
+    meta = read_jsonlines_robust(outs[1])
+    logger.info("Reading reviews...")
+    reviews = read_jsonlines_robust(outs[0])
+    
+    if meta.empty or reviews.empty:
+        logger.error("Failed to read data files")
+        return
 
-    meta = read_jsonlines_robust(os.path.join(data_dir, "metadata.json.gz"))
-    reviews = read_jsonlines_robust(os.path.join(data_dir, "reviews.json.gz"))
-
-    # Remove old images dir if exists (safer cross-platform than shell rm)
+    # Remove old images dir
     images_dir = os.path.join(data_dir, "images")
-    shutil.rmtree(images_dir, ignore_errors=True)
-    print("Removed old images directory (if existed):", images_dir)
+    if os.path.exists(images_dir):
+        shutil.rmtree(images_dir, ignore_errors=True)
+        logger.info(f"Removed old images directory: {images_dir}")
  
-    meta = meta[["asin","title", "price", "categories","description","imUrl"]].dropna()
+    # Process metadata
+    required_cols = ["asin", "title", "price", "categories", "description", "imUrl"]
+    missing_cols = [col for col in required_cols if col not in meta.columns]
+    if missing_cols:
+        logger.error(f"Missing required columns in metadata: {missing_cols}")
+        return
+        
+    meta = meta[required_cols].dropna()
+    logger.info(f"Metadata records after filtering: {len(meta)}")
+    
     meta["categories"] = meta["categories"].apply(flatten_categories)
     
-    temp = meta.copy()
+    # Assign labels
+    meta["cat_label"] = meta["categories"].apply(assign_label)
+    logger.info(f"\nCategory distribution:\n{meta['cat_label'].value_counts()}")
 
-    temp["cat_label"] = temp["categories"].apply(assign_label)
-    print(temp["cat_label"].value_counts())
-
+    # Analyze categories
     counter = Counter()
-    temp["categories"].apply(lambda lst: counter.update(lst))
-
+    meta["categories"].apply(lambda lst: counter.update(lst))
 
     top_tags = counter.most_common(20)
     top_df = pd.DataFrame(top_tags, columns=["Tag", "Count"])
-    print("\nTop 20 tags phổ biến nhất:")
-    print(top_df)
+    logger.info(f"\nTop 20 tags:\n{top_df}")
 
+    # Map labels
     label_map = {
         "Men Clothing": "men",
         "Women Clothing": "women",
         "Shoes": "shoes",
         "Watches": "watches",
     }
-    temp["_label"] = temp["cat_label"].map(label_map)
+    meta["_label"] = meta["cat_label"].map(label_map)
 
+    # Define sampling parameters
     target_ratio = {
         "men":    1200/4895, 
         "women":  1500/4895,
@@ -215,53 +282,81 @@ def main(args):
     }
  
     fixed_targets_main = {"men":1200, "women":1500, "shoes":1200, "watches":995}
-    df_ratio = sample_like_dcares(temp, mode="ratio", seed=42, ratios=target_ratio, label_map=label_map)
-    df_fixed = sample_like_dcares(temp, mode="fixed", seed=42, fixed_targets=fixed_targets_main, label_map=label_map)
- 
+    
+    # Sample data
     if mode == "ratio":
-        test = df_ratio
+        sampled_data = sample_like_dcares(meta, mode="ratio", seed=args.seed, 
+                                         ratios=target_ratio, label_map=label_map)
     elif mode == "fixed":
-        test = df_fixed
+        sampled_data = sample_like_dcares(meta, mode="fixed", seed=args.seed, 
+                                         fixed_targets=fixed_targets_main, label_map=label_map)
     else:
-        test = temp
-    sucess = down_load_img(test)
-    test["sucess"] = sucess
-    meta_out = test[test["sucess"] == 1]
-    meta_out[["asin","title", "price","cat_label", "categories","description","imUrl"]].to_csv("data/amazon_product/meta.csv", index = False)
+        sampled_data = meta
+    
+    if sampled_data.empty:
+        logger.error("No data after sampling")
+        return
+    
+    # Download images
+    success = download_images(sampled_data)
+    sampled_data["success"] = success
+    meta_out = sampled_data[sampled_data["success"] == 1]
+    
+    logger.info(f"Successfully downloaded {len(meta_out)} images")
+    
+    # Save metadata
+    meta_out[["asin", "title", "price", "cat_label", "categories", "description", "imUrl"]].to_csv(
+        os.path.join(data_dir, "meta.csv"), index=False
+    )
+    logger.info(f"Saved metadata to {os.path.join(data_dir, 'meta.csv')}")
 
+    # Process reviews
     df_reviews = reviews
-    assert "asin" in meta_out.columns, "df_meta phải có cột 'asin'"
-    assert "asin" in df_reviews.columns, "df_reviews phải có cột 'asin'"
+    
+    if "asin" not in df_reviews.columns or "asin" not in meta_out.columns:
+        logger.error("Missing 'asin' column in reviews or metadata")
+        return
 
-    # Lọc bỏ các hàng không có asin (NaN)
+    # Filter reviews
     df_reviews = df_reviews[df_reviews["asin"].notna()]
-    df_reviews.drop_duplicates(subset=["reviewerID", "asin"], inplace = True)
-
+    df_reviews = df_reviews.drop_duplicates(subset=["reviewerID", "asin"])
 
     meta_asin_set = set(meta_out["asin"].unique())
     df_reviews_filtered = df_reviews[df_reviews["asin"].isin(meta_asin_set)].copy()
 
+    if "overall" in df_reviews_filtered.columns:
+        df_reviews_filtered = df_reviews_filtered[df_reviews_filtered["overall"].between(1, 5)]
+    
+    logger.info(f"Filtered reviews: {len(df_reviews_filtered)}")
+    df_reviews_filtered.to_csv(os.path.join(data_dir, "reviews.csv"), index=False)
 
-    df_reviews_filtered = df_reviews_filtered.drop_duplicates(subset=["reviewerID", "asin"])
-    df_reviews_filtered = df_reviews_filtered[df_reviews_filtered["overall"].between(1,5)]
-    df_reviews_filtered.to_csv("data/amazon_product/reviews.csv", index = False)
-
-
+    # Merge and split
     df = df_reviews_filtered.merge(meta_out, on="asin")
-    df["file_path"] = "data/amazon_product/images/"+ df["asin"] +".jpg"
-    train_df, temp_df = train_test_split(df, test_size=0.30, random_state=42, shuffle=True)
-    val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=42, shuffle=True)
+    df["file_path"] = df["asin"].apply(lambda x: os.path.join(data_dir, "images", f"{x}.jpg"))
+    
+    logger.info(f"Final dataset size: {len(df)}")
+    
+    train_df, temp_df = train_test_split(df, test_size=0.30, random_state=args.seed, shuffle=True)
+    val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=args.seed, shuffle=True)
 
-    train_df.to_csv("data/amazon_product/train.csv", index=False)
-    val_df.to_csv("data/amazon_product/val.csv", index=False)
-    test_df.to_csv("data/amazon_product/test.csv", index=False)
+    train_df.to_csv(os.path.join(data_dir, "train.csv"), index=False)
+    val_df.to_csv(os.path.join(data_dir, "val.csv"), index=False)
+    test_df.to_csv(os.path.join(data_dir, "test.csv"), index=False)
+    
+    logger.info(f"Split: Train={len(train_df)}, Val={len(val_df)}, Test={len(test_df)}")
+    logger.info("✅ Processing completed successfully!")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", type=str, default="ratio", choices=["ratio", "fixed","None"], help="Sampling mode: 'ratio' or 'fixed'")
+    parser = argparse.ArgumentParser(description="Prepare Amazon product dataset")
+    parser.add_argument("--mode", type=str, default="None", choices=["ratio", "fixed", "None"], 
+                       help="Sampling mode: 'ratio' or 'fixed'")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
-    parser.add_argument("--meta_link", type=str, default="https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Clothing_Shoes_and_Jewelry.json.gz", help="Link to metadata gz file")
-    parser.add_argument("--reviews_link", type=str, default="https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Clothing_Shoes_and_Jewelry.json.gz", help="Link to reviews gz file")
+    parser.add_argument("--meta_link", type=str, 
+                       default="https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Clothing_Shoes_and_Jewelry.json.gz", 
+                       help="Link to metadata gz file")
+    parser.add_argument("--reviews_link", type=str, 
+                       default="https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Clothing_Shoes_and_Jewelry.json.gz", 
+                       help="Link to reviews gz file")
     args = parser.parse_args()
     main(args)
