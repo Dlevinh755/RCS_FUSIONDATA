@@ -15,6 +15,11 @@ import ujson  # Faster JSON parser (install: pip install ujson)
 from multiprocessing import Pool, cpu_count
 import multiprocessing as mp
 import orjson  # Nhanh hơn cả ujson (install: pip install orjson)
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import asyncio
+import aiohttp
+from aiohttp import ClientSession, ClientTimeout
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -281,40 +286,78 @@ def sample_like_dcares(
     out = out.drop(columns=[label_col])
     return out
 
-def download_single_image(row, output_dir):
-    """Download a single image. Returns (index, success_status)."""
+def get_session_with_retries():
+    """Create requests session with retry strategy and connection pooling."""
+    session = requests.Session()
+    
+    # Retry strategy
+    retry_strategy = Retry(
+        total=2,  # Reduced retries for speed
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET"]
+    )
+    
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy,
+        pool_connections=100,  # Connection pooling
+        pool_maxsize=100
+    )
+    
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    # Set default timeout and headers
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    })
+    
+    return session
+
+
+def download_single_image(row_data, output_dir, session):
+    """Download a single image with session reuse. Returns (index, success_status)."""
+    idx, img_id, img_url = row_data
+    
     try:
-        img_id = row['asin']
-        img_url = row['imUrl']
-        
         # Handle numpy array or list - extract first URL
         if isinstance(img_url, (list, np.ndarray)):
             if len(img_url) == 0:
-                return (row.name, 0)
-            img_url = img_url[0] if isinstance(img_url, np.ndarray) else img_url[0]
+                return (idx, 0)
+            img_url = img_url[0]
         
         # Check if valid URL
         if img_url is None or img_url == '' or not str(img_url).startswith('http'):
-            return (row.name, 0)
+            return (idx, 0)
+        
+        # Check if already exists
+        img_path = os.path.join(output_dir, f"{img_id}.jpg")
+        if os.path.exists(img_path):
+            return (idx, 1)
             
-        response = requests.get(str(img_url), timeout=10)
+        response = session.get(str(img_url), timeout=5)  # Reduced timeout
         response.raise_for_status()
         
+        # Quick validation without full verify
         img = Image.open(BytesIO(response.content))
-        img.verify()
-        img = Image.open(BytesIO(response.content))
+        img_format = img.format
         
-        img_path = os.path.join(output_dir, f"{img_id}.jpg")
-        img.save(img_path)
-        
-        return (row.name, 1)
+        # Only save if valid image
+        if img_format in ['JPEG', 'PNG', 'JPG']:
+            # Convert to RGB if needed
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img.save(img_path, 'JPEG', quality=85, optimize=True)
+            return (idx, 1)
+        else:
+            return (idx, 0)
                 
     except Exception as e:
-        return (row.name, 0)
+        return (idx, 0)
 
 
-def download_images(df, output_dir='data/amazon_product/images/', max_workers=10): 
-    """Download images from URLs in dataframe using parallel processing."""
+def download_images(df, output_dir='data/amazon_product/images/', max_workers=50): 
+    """Download images from URLs in dataframe using parallel processing with session pooling."""
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Images directory: {output_dir}")
     logger.info(f"Starting parallel download with {max_workers} workers...")
@@ -327,24 +370,45 @@ def download_images(df, output_dir='data/amazon_product/images/', max_workers=10
     cnt = 0
     total = len(df)
     
+    # Prepare data for faster iteration
+    download_data = [
+        (idx, row['asin'], row['imUrl']) 
+        for idx, row in df.iterrows()
+    ]
+    
+    # Create session for each worker
+    sessions = {i: get_session_with_retries() for i in range(max_workers)}
+    
+    def download_with_session(data):
+        worker_id = hash(data[0]) % max_workers
+        return download_single_image(data, output_dir, sessions[worker_id])
+    
     # Use ThreadPoolExecutor for I/O bound tasks
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
-        download_func = partial(download_single_image, output_dir=output_dir)
-        futures = {executor.submit(download_func, row): idx 
-                  for idx, row in df.iterrows()}
+        futures = {
+            executor.submit(download_with_session, data): data[0]
+            for data in download_data
+        }
         
-        # Process completed tasks
+        # Process completed tasks with progress
+        last_progress = 0
         for future in as_completed(futures):
             idx, status = future.result()
             success_dict[idx] = status
             
             if status == 1:
                 cnt += 1
-                if cnt % 100 == 0:
-                    progress = cnt / total * 100
-                    print(f"Progress: {cnt}/{total} ({progress:.1f}%) ✓")
-                    logger.info(f"Downloaded {cnt}/{total} images successfully")
+            
+            # Update progress every 5%
+            current_progress = (len(success_dict) / total) * 100
+            if current_progress - last_progress >= 5:
+                print(f"Progress: {len(success_dict)}/{total} ({current_progress:.0f}%) - Success: {cnt} ✓")
+                last_progress = current_progress
+    
+    # Close all sessions
+    for session in sessions.values():
+        session.close()
     
     # Convert dict back to list in original order
     success = [success_dict.get(idx, 0) for idx in df.index]
@@ -356,6 +420,116 @@ def download_images(df, output_dir='data/amazon_product/images/', max_workers=10
     logger.info(f"Total images downloaded: {cnt}/{total}")
     return success
 
+async def download_image_async(session, img_id, img_url, output_dir):
+    """Async download single image."""
+    try:
+        # Handle numpy array or list
+        if isinstance(img_url, (list, np.ndarray)):
+            if len(img_url) == 0:
+                return (img_id, 0)
+            img_url = img_url[0]
+        
+        if img_url is None or img_url == '' or not str(img_url).startswith('http'):
+            return (img_id, 0)
+        
+        img_path = os.path.join(output_dir, f"{img_id}.jpg")
+        if os.path.exists(img_path):
+            return (img_id, 1)
+            
+        async with session.get(str(img_url), timeout=ClientTimeout(total=5)) as response:
+            if response.status != 200:
+                return (img_id, 0)
+            
+            content = await response.read()
+            
+            # Validate and save in thread pool (CPU bound)
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, 
+                save_image_sync, 
+                content, 
+                img_path
+            )
+            
+            return (img_id, result)
+            
+    except Exception:
+        return (img_id, 0)
+
+
+def save_image_sync(content, img_path):
+    """Save image content to file (runs in thread pool)."""
+    try:
+        img = Image.open(BytesIO(content))
+        if img.format in ['JPEG', 'PNG', 'JPG']:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img.save(img_path, 'JPEG', quality=85, optimize=True)
+            return 1
+    except Exception:
+        pass
+    return 0
+
+
+async def download_images_async_batch(df, output_dir, batch_size=100):
+    """Download images asynchronously in batches."""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    results = {}
+    total = len(df)
+    completed = 0
+    
+    # Prepare data
+    download_data = [
+        (row['asin'], row['imUrl'])
+        for _, row in df.iterrows()
+    ]
+    
+    # Create session with connection pooling
+    connector = aiohttp.TCPConnector(limit=100, limit_per_host=10)
+    timeout = ClientTimeout(total=30)
+    
+    async with ClientSession(connector=connector, timeout=timeout) as session:
+        # Process in batches to avoid overwhelming
+        for i in range(0, len(download_data), batch_size):
+            batch = download_data[i:i+batch_size]
+            
+            tasks = [
+                download_image_async(session, img_id, img_url, output_dir)
+                for img_id, img_url in batch
+            ]
+            
+            batch_results = await asyncio.gather(*tasks)
+            
+            for img_id, status in batch_results:
+                results[img_id] = status
+                completed += 1
+            
+            progress = (completed / total) * 100
+            success = sum(1 for r in results.values() if r == 1)
+            print(f"Progress: {completed}/{total} ({progress:.0f}%) - Success: {success} ✓")
+    
+    return results
+
+
+def download_images_async(df, output_dir='data/amazon_product/images/'):
+    """Wrapper for async download."""
+    print(f"\n{'='*60}")
+    print(f"🖼️  DOWNLOADING {len(df)} IMAGES (ASYNC MODE)...")
+    print(f"{'='*60}")
+    
+    # Run async download
+    results = asyncio.run(download_images_async_batch(df, output_dir))
+    
+    # Convert to list matching df index
+    success = [results.get(row['asin'], 0) for _, row in df.iterrows()]
+    
+    cnt = sum(success)
+    success_rate = cnt / len(df) * 100
+    print(f"\n✅ Download complete: {cnt}/{len(df)} images ({success_rate:.1f}%)")
+    print(f"{'='*60}\n")
+    
+    return success
 
 def main(args):
     print("\n" + "="*60)
@@ -631,127 +805,15 @@ def main(args):
     # Download images
     print(f"\n🖼️  STEP 6/7: Downloading images...")
     try:
-        success = download_images(sampled_data, max_workers=args.max_workers)
+        # Choose async or sync based on argument
+        if args.async_download:
+            success = download_images_async(sampled_data, max_workers=args.max_workers)
+        else:
+            success = download_images(sampled_data, max_workers=args.max_workers)
         sampled_data["success"] = success
         meta_out = sampled_data[sampled_data["success"] == 1]
-        
-        success_rate = len(meta_out) / len(sampled_data) * 100
-        print(f"  ✓ Images saved: {len(meta_out):,}/{len(sampled_data):,} ({success_rate:.1f}%)")
-        logger.info(f"Successfully downloaded {len(meta_out)} images")
-    except Exception as e:
-        print(f"  ❌ Error downloading images: {e}")
-        logger.error(f"Error downloading images: {e}", exc_info=True)
-        return
-    
-    # Save metadata
-    try:
-        # Build save columns list dynamically
-        save_cols = ['asin']
-        for col in ['title', 'price', 'cat_label', 'categories', 'description', 'imUrl']:
-            if col in meta_out.columns:
-                save_cols.append(col)
-        
-        meta_out[save_cols].to_csv(
-            os.path.join(data_dir, "meta.csv"), index=False
-        )
-        print(f"  ✓ Metadata saved: meta.csv (columns: {save_cols})")
-        logger.info(f"Saved metadata to {os.path.join(data_dir, 'meta.csv')}")
-    except Exception as e:
-        print(f"  ❌ Error saving metadata: {e}")
-        logger.error(f"Error saving metadata: {e}", exc_info=True)
-
-    # Process reviews
-    print(f"\n📝 STEP 7/7: Processing reviews and creating splits...")
-    try:
-        df_reviews = reviews
-        
-        if "asin" not in df_reviews.columns or "asin" not in meta_out.columns:
-            print(f"  ❌ Missing 'asin' column")
-            logger.error("Missing 'asin' column in reviews or metadata")
-            return
-
-        # Filter reviews
-        initial_reviews = len(df_reviews)
-        df_reviews = df_reviews[df_reviews["asin"].notna()]
-        
-        # Check if reviewerID exists
-        if "reviewerID" in df_reviews.columns:
-            df_reviews = df_reviews.drop_duplicates(subset=["reviewerID", "asin"])
-        else:
-            print(f"  ⚠️  'reviewerID' not found, skipping deduplication")
-            df_reviews = df_reviews.drop_duplicates(subset=["asin"])
-
-        meta_asin_set = set(meta_out["asin"].unique())
-        df_reviews_filtered = df_reviews[df_reviews["asin"].isin(meta_asin_set)].copy()
-
-        if "overall" in df_reviews_filtered.columns:
-            df_reviews_filtered = df_reviews_filtered[df_reviews_filtered["overall"].between(1, 5)]
-        
-        print(f"  Initial reviews: {initial_reviews:,}")
-        print(f"  After filtering: {len(df_reviews_filtered):,}")
-        
-        # Check if we have any reviews
-        if len(df_reviews_filtered) == 0:
-            print(f"  ⚠️  No reviews matched with products")
-            print(f"  Sample product ASINs: {list(meta_asin_set)[:5]}")
-            print(f"  Sample review ASINs: {df_reviews['asin'].head(5).tolist()}")
-            
-            # Save what we have so far
-            meta_out.to_csv(os.path.join(data_dir, "products_only.csv"), index=False)
-            print(f"  ✓ Saved products to products_only.csv (no reviews matched)")
-            
-            print("\n" + "="*60)
-            print("⚠️  PROCESSING COMPLETED WITH WARNINGS")
-            print("="*60)
-            print(f"Products: {len(meta_out):,}")
-            print(f"Reviews:  0 (no matches)")
-            print("="*60 + "\n")
-            return
-        
-        logger.info(f"Filtered reviews: {len(df_reviews_filtered)}")
-        df_reviews_filtered.to_csv(os.path.join(data_dir, "reviews.csv"), index=False)
-
-        # Merge and split
-        df = df_reviews_filtered.merge(meta_out, on="asin")
-        df["file_path"] = df["asin"].apply(lambda x: os.path.join(data_dir, "images", f"{x}.jpg"))
-        
-        print(f"  Merged dataset: {len(df):,} records")
-        logger.info(f"Final dataset size: {len(df)}")
-        
-        # Check if we have enough data to split
-        if len(df) < 10:
-            print(f"  ⚠️  Dataset too small ({len(df)} records) - saving without splitting")
-            df.to_csv(os.path.join(data_dir, "full_data.csv"), index=False)
-            
-            print("\n" + "="*60)
-            print("⚠️  PROCESSING COMPLETED WITH WARNINGS")
-            print("="*60)
-            print(f"Total samples: {len(df)} (too small to split)")
-            print("="*60 + "\n")
-            return
-        
-        train_df, temp_df = train_test_split(df, test_size=0.30, random_state=args.seed, shuffle=True)
-        val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=args.seed, shuffle=True)
-        
-        df.to_csv(os.path.join(data_dir, "full_data.csv"), index=False)
-        train_df.to_csv(os.path.join(data_dir, "train.csv"), index=False)
-        val_df.to_csv(os.path.join(data_dir, "val.csv"), index=False)
-        test_df.to_csv(os.path.join(data_dir, "test.csv"), index=False)
-        
-        # Final summary
-        print("\n" + "="*60)
-        print("📊 FINAL DATASET STATISTICS")
-        print("="*60)
-        print(f"Train set:  {len(train_df):>6,} samples ({len(train_df)/len(df)*100:>5.1f}%)")
-        print(f"Val set:    {len(val_df):>6,} samples ({len(val_df)/len(df)*100:>5.1f}%)")
-        print(f"Test set:   {len(test_df):>6,} samples ({len(test_df)/len(df)*100:>5.1f}%)")
-        print(f"{'-'*60}")
-        print(f"Total:      {len(df):>6,} samples")
-        print("="*60)
+        print("="*60 + "\n")        
         print("✅ Processing completed successfully!")
-        print("="*60 + "\n")
-        
-        logger.info(f"Split: Train={len(train_df)}, Val={len(val_df)}, Test={len(test_df)}")
         logger.info("✅ Processing completed successfully!")
         
     except Exception as e:
@@ -770,7 +832,7 @@ if __name__ == "__main__":
     parser.add_argument("--json-parser", type=str, default="fast", 
                        choices=["fast", "parallel", "original"],
                        help="JSON parser mode: fast (ujson+chunking), parallel (multiprocessing), or original")
-    parser.add_argument("--max-workers", type=int, default=10,
+    parser.add_argument("--max-workers", type=int, default=100,
                        help="Number of parallel workers for image downloading")
     parser.add_argument("--meta_link", type=str, 
                        default="https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Clothing_Shoes_and_Jewelry.json.gz", 
