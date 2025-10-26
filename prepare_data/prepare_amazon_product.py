@@ -422,21 +422,43 @@ def main(args):
         # Check available columns
         print(f"  Available columns: {list(meta.columns)}")
         
-        required_cols = ["asin", "title", "price", "categories", "description", "imUrl"]
-        missing_cols = [col for col in required_cols if col not in meta.columns]
+        # Flexible column mapping - handle different dataset formats
+        column_mapping = {}
+        
+        # Map category/categories
+        if 'categories' in meta.columns:
+            column_mapping['categories'] = 'categories'
+        elif 'category' in meta.columns:
+            column_mapping['categories'] = 'category'
+            print(f"  ℹ️  Using 'category' instead of 'categories'")
+        
+        # Map image URL
+        if 'imUrl' in meta.columns:
+            column_mapping['imUrl'] = 'imUrl'
+        elif 'imageURL' in meta.columns:
+            column_mapping['imUrl'] = 'imageURL'
+            print(f"  ℹ️  Using 'imageURL' instead of 'imUrl'")
+        elif 'imageURLHighRes' in meta.columns:
+            column_mapping['imUrl'] = 'imageURLHighRes'
+            print(f"  ℹ️  Using 'imageURLHighRes' for images")
+        
+        # Required columns with flexible names
+        base_required = ['asin', 'title', 'price', 'description']
+        required_cols = base_required.copy()
+        
+        # Add mapped columns
+        for target, source in column_mapping.items():
+            if source in meta.columns:
+                required_cols.append(source)
+        
+        missing_cols = [col for col in base_required if col not in meta.columns]
         
         if missing_cols:
-            print(f"  ❌ Missing columns: {missing_cols}")
-            logger.error(f"Missing required columns in metadata: {missing_cols}")
-            # Try to continue with available columns
-            available_required = [col for col in required_cols if col in meta.columns]
-            if len(available_required) < 3:  # Need at least asin, categories, and one more
-                print(f"  ❌ Too few required columns available")
-                return
-            print(f"  ⚠️  Continuing with available columns: {available_required}")
-            required_cols = available_required
+            print(f"  ❌ Missing essential columns: {missing_cols}")
+            logger.error(f"Missing essential columns in metadata: {missing_cols}")
+            return
         
-        print(f"  ✓ All required columns present")
+        print(f"  ✓ Using columns: {required_cols}")
         
         # Filter data
         print(f"  Filtering data...")
@@ -450,10 +472,31 @@ def main(args):
             print(f"  ❌ No records left after filtering!")
             return
         
+        # Rename columns to standard names
+        rename_dict = {v: k for k, v in column_mapping.items()}
+        if rename_dict:
+            meta = meta.rename(columns=rename_dict)
+            print(f"  ✓ Renamed columns: {rename_dict}")
+        
+        # Check if we have categories column now
+        if 'categories' not in meta.columns:
+            print(f"  ❌ No category information available")
+            print(f"  Available columns after rename: {list(meta.columns)}")
+            return
+        
         # Flatten categories
         print(f"  Processing categories...")
-        meta["categories"] = meta["categories"].apply(flatten_categories)
-        print(f"  ✓ Categories flattened")
+        # Handle both list and string categories
+        def safe_flatten_categories(cat_col):
+            if pd.isna(cat_col):
+                return []
+            if isinstance(cat_col, str):
+                # Single string category - wrap in list
+                return [cat_col.strip()]
+            return flatten_categories(cat_col)
+        
+        meta["categories"] = meta["categories"].apply(safe_flatten_categories)
+        print(f"  ✓ Categories processed")
         
         # Assign labels
         print(f"  Assigning labels...")
@@ -465,7 +508,13 @@ def main(args):
         
         if valid_labels == 0:
             print(f"  ❌ No valid category labels found!")
-            print(f"  Sample categories: {meta['categories'].head(3).tolist()}")
+            print(f"  Sample categories: {meta['categories'].head(5).tolist()}")
+            # Print unique categories to help debug
+            all_cats = []
+            for cats in meta['categories'].head(20):
+                all_cats.extend(cats)
+            unique_cats = list(set(all_cats))[:20]
+            print(f"  Sample unique category values: {unique_cats}")
             return
         
         print(f"\n  Category distribution:")
@@ -554,12 +603,16 @@ def main(args):
     
     # Save metadata
     try:
-        save_cols = [col for col in ["asin", "title", "price", "cat_label", "categories", "description", "imUrl"] 
-                     if col in meta_out.columns]
+        # Build save columns list dynamically
+        save_cols = ['asin']
+        for col in ['title', 'price', 'cat_label', 'categories', 'description', 'imUrl']:
+            if col in meta_out.columns:
+                save_cols.append(col)
+        
         meta_out[save_cols].to_csv(
             os.path.join(data_dir, "meta.csv"), index=False
         )
-        print(f"  ✓ Metadata saved: meta.csv")
+        print(f"  ✓ Metadata saved: meta.csv (columns: {save_cols})")
         logger.info(f"Saved metadata to {os.path.join(data_dir, 'meta.csv')}")
     except Exception as e:
         print(f"  ❌ Error saving metadata: {e}")
