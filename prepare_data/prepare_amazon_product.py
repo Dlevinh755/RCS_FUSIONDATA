@@ -420,7 +420,7 @@ def main(args):
     print("\n🔧 STEP 4/7: Processing metadata...")
     try:
         # Check available columns
-        print(f"  Available columns: {list(meta.columns)[:10]}...")
+        print(f"  Available columns: {list(meta.columns)}")
         
         required_cols = ["asin", "title", "price", "categories", "description", "imUrl"]
         missing_cols = [col for col in required_cols if col not in meta.columns]
