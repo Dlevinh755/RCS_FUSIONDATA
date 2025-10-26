@@ -287,10 +287,17 @@ def download_single_image(row, output_dir):
         img_id = row['asin']
         img_url = row['imUrl']
         
-        if pd.isna(img_url) or not str(img_url).startswith('http'):
+        # Handle numpy array or list - extract first URL
+        if isinstance(img_url, (list, np.ndarray)):
+            if len(img_url) == 0:
+                return (row.name, 0)
+            img_url = img_url[0] if isinstance(img_url, np.ndarray) else img_url[0]
+        
+        # Check if valid URL
+        if img_url is None or img_url == '' or not str(img_url).startswith('http'):
             return (row.name, 0)
             
-        response = requests.get(img_url, timeout=10)
+        response = requests.get(str(img_url), timeout=10)
         response.raise_for_status()
         
         img = Image.open(BytesIO(response.content))
@@ -519,6 +526,20 @@ def main(args):
         meta["categories"] = meta["categories"].apply(safe_flatten_categories)
         print(f"  ✓ Categories processed")
         
+        # Process image URLs - extract first URL if array
+        print(f"  Processing image URLs...")
+        def safe_extract_image_url(img_url):
+            if img_url is None:
+                return None
+            if isinstance(img_url, (list, np.ndarray)):
+                if len(img_url) == 0:
+                    return None
+                return img_url[0]
+            return img_url
+        
+        meta["imUrl"] = meta["imUrl"].apply(safe_extract_image_url)
+        print(f"  ✓ Image URLs processed")
+        
         # Assign labels
         print(f"  Assigning labels...")
         meta["cat_label"] = meta["categories"].apply(assign_label)
@@ -668,6 +689,25 @@ def main(args):
         
         print(f"  Initial reviews: {initial_reviews:,}")
         print(f"  After filtering: {len(df_reviews_filtered):,}")
+        
+        # Check if we have any reviews
+        if len(df_reviews_filtered) == 0:
+            print(f"  ⚠️  No reviews matched with products")
+            print(f"  Sample product ASINs: {list(meta_asin_set)[:5]}")
+            print(f"  Sample review ASINs: {df_reviews['asin'].head(5).tolist()}")
+            
+            # Save what we have so far
+            meta_out.to_csv(os.path.join(data_dir, "products_only.csv"), index=False)
+            print(f"  ✓ Saved products to products_only.csv (no reviews matched)")
+            
+            print("\n" + "="*60)
+            print("⚠️  PROCESSING COMPLETED WITH WARNINGS")
+            print("="*60)
+            print(f"Products: {len(meta_out):,}")
+            print(f"Reviews:  0 (no matches)")
+            print("="*60 + "\n")
+            return
+        
         logger.info(f"Filtered reviews: {len(df_reviews_filtered)}")
         df_reviews_filtered.to_csv(os.path.join(data_dir, "reviews.csv"), index=False)
 
@@ -677,7 +717,18 @@ def main(args):
         
         print(f"  Merged dataset: {len(df):,} records")
         logger.info(f"Final dataset size: {len(df)}")
-
+        
+        # Check if we have enough data to split
+        if len(df) < 10:
+            print(f"  ⚠️  Dataset too small ({len(df)} records) - saving without splitting")
+            df.to_csv(os.path.join(data_dir, "full_data.csv"), index=False)
+            
+            print("\n" + "="*60)
+            print("⚠️  PROCESSING COMPLETED WITH WARNINGS")
+            print("="*60)
+            print(f"Total samples: {len(df)} (too small to split)")
+            print("="*60 + "\n")
+            return
         
         train_df, temp_df = train_test_split(df, test_size=0.30, random_state=args.seed, shuffle=True)
         val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=args.seed, shuffle=True)
