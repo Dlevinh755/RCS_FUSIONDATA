@@ -9,7 +9,9 @@ def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     if args.data_path:
-        df = pd.read_csv(args.data_path)
+        df = pd.read_csv(args.data_path,low_memory=False)
+        print(f"Data loaded from {args.data_path}, shape: {df.shape}")
+        print(df.columns)
         
         # Tạo đường dẫn tuyệt đối cho file ảnh
         df["file_path"] = df["asin"].apply(lambda x: str(Path(args.data_path) / "images" / f"{x}.jpg"))
