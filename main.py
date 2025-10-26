@@ -10,7 +10,7 @@ def main(args):
 
     if args.data_path:
         data_path = Path(args.data_path)
-        df = pd.read_csv(data_path / "train.csv")
+        df = pd.read_csv(data_path)
         
         # Tạo đường dẫn tuyệt đối cho file ảnh
         df["file_path"] = df["asin"].apply(lambda x: str(data_path / "images" / f"{x}.jpg"))
