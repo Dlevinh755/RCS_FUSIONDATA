@@ -218,8 +218,12 @@ def main(args):
     df_ratio = sample_like_dcares(temp, mode="ratio", seed=42, ratios=target_ratio, label_map=label_map)
     df_fixed = sample_like_dcares(temp, mode="fixed", seed=42, fixed_targets=fixed_targets_main, label_map=label_map)
  
-
-    test = df_ratio
+    if mode == "ratio":
+        test = df_ratio
+    elif mode == "fixed":
+        test = df_fixed
+    else:
+        test = temp
     sucess = down_load_img(test)
     test["sucess"] = sucess
     meta_out = test[test["sucess"] == 1]
@@ -255,7 +259,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", type=str, default="ratio", choices=["ratio", "fixed"], help="Sampling mode: 'ratio' or 'fixed'")
+    parser.add_argument("--mode", type=str, default="ratio", choices=["ratio", "fixed","None"], help="Sampling mode: 'ratio' or 'fixed'")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
     parser.add_argument("--meta_link", type=str, default="https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Clothing_Shoes_and_Jewelry.json.gz", help="Link to metadata gz file")
     parser.add_argument("--reviews_link", type=str, default="https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Clothing_Shoes_and_Jewelry.json.gz", help="Link to reviews gz file")
