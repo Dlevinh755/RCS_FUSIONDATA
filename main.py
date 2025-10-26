@@ -7,15 +7,14 @@ from train_mlp import trainmlp
 
 def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    base_dir = Path(__file__).parent
 
     if args.data_path:
-        df = pd.read_csv(args.data_path,low_memory=False)
+        df = pd.read_csv(args.data_path + "/full_data.csv",low_memory=False)
         print(f"Data loaded from {args.data_path}, shape: {df.shape}")
         print(df.columns)
         
         # Tạo đường dẫn tuyệt đối cho file ảnh
-        df["file_path"] = df["asin"].apply(lambda x: str(base_dir / "data" / "images" / f"{x}.jpg"))
+        df["file_path"] = df["asin"].apply(lambda x: str(args.data_path + "/images/" + f"{x}.jpg"))
     else:
         df = None
     model, metrics = trainmlp(df, batch_size=args.batch_size, lr=args.lr, epochs=args.epochs, patience=args.patience, heads=args.heads, device=device)
