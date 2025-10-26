@@ -9,6 +9,12 @@ import math
 import numpy as np
 from sklearn.model_selection import train_test_split
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
+import ujson  # Faster JSON parser (install: pip install ujson)
+from multiprocessing import Pool, cpu_count
+import multiprocessing as mp
+import orjson  # Nhanh hơn cả ujson (install: pip install orjson)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,8 +33,116 @@ def download_gz(url, out_path):
         logger.error(f"Download error: {e}")
         return False
 
-def read_jsonlines_robust(path_gz, limit=None):
-    """Read JSON lines from gzipped file with robust error handling."""
+def parse_json_line(line):
+    """Parse a single JSON line. Returns dict or None."""
+    s = line.strip()
+    if not s:
+        return None
+    try:
+        return ujson.loads(s)  # Faster than json.loads
+    except (ValueError, ujson.JSONDecodeError):
+        try:
+            return ast.literal_eval(s)
+        except Exception:
+            return None
+
+def parse_json_line_orjson(line):
+    """Parse using orjson (fastest)."""
+    s = line.strip()
+    if not s:
+        return None
+    try:
+        return orjson.loads(s)  # Fastest option
+    except (ValueError, orjson.JSONDecodeError):
+        try:
+            return ast.literal_eval(s)
+        except Exception:
+            return None
+
+def read_jsonlines_robust_fast(path_gz, limit=None, chunk_size=10000):
+    """Read JSON lines with optimized parsing (using ujson + chunking)."""
+    if not os.path.exists(path_gz):
+        logger.error(f"File not found: {path_gz}")
+        return pd.DataFrame()
+    
+    rows = []
+    skipped = 0
+    
+    with gzip.open(path_gz, 'rt', encoding='utf-8', errors='replace') as f:
+        while True:
+            # Read in chunks for better memory efficiency
+            chunk_lines = []
+            for _ in range(chunk_size):
+                line = f.readline()
+                if not line:
+                    break
+                chunk_lines.append(line)
+            
+            if not chunk_lines:
+                break
+            
+            # Parse chunk
+            for line in chunk_lines:
+                s = line.strip()
+                if not s:
+                    continue
+                try:
+                    obj = ujson.loads(s)  # 2-3x faster than json.loads
+                except (ValueError, ujson.JSONDecodeError):
+                    try:
+                        obj = ast.literal_eval(s)
+                    except Exception:
+                        skipped += 1
+                        continue
+                rows.append(obj)
+                
+                if limit and len(rows) >= limit:
+                    break
+            
+            if limit and len(rows) >= limit:
+                break
+    
+    if skipped > 0:
+        logger.warning(f"Skipped {skipped} malformed lines in {path_gz}")
+    logger.info(f"Read {len(rows)} records from {path_gz}")
+    return pd.DataFrame(rows)
+
+def read_jsonlines_robust_parallel(path_gz, limit=None, num_workers=None):
+    """Read JSON lines with parallel processing (best for very large files)."""
+    if not os.path.exists(path_gz):
+        logger.error(f"File not found: {path_gz}")
+        return pd.DataFrame()
+    
+    if num_workers is None:
+        num_workers = max(1, cpu_count() - 1)
+    
+    logger.info(f"Reading {path_gz} with {num_workers} workers...")
+    
+    # Read all lines first (fast I/O)
+    with gzip.open(path_gz, 'rt', encoding='utf-8', errors='replace') as f:
+        lines = f.readlines()
+        if limit:
+            lines = lines[:limit * 2]  # Read a bit extra to account for bad lines
+    
+    # Parse in parallel
+    with Pool(num_workers) as pool:
+        parsed = pool.map(parse_json_line, lines, chunksize=1000)
+    
+    # Filter out None values
+    rows = [obj for obj in parsed if obj is not None]
+    
+    if limit and len(rows) > limit:
+        rows = rows[:limit]
+    
+    skipped = len(lines) - len(rows)
+    if skipped > 0:
+        logger.warning(f"Skipped {skipped} malformed lines in {path_gz}")
+    logger.info(f"Read {len(rows)} records from {path_gz}")
+    return pd.DataFrame(rows)
+
+# Original function renamed as backup
+def read_jsonlines_robust_original(path_gz, limit=None):
+    """Read JSON lines from gzipped file with robust error handling (original version)."""
     if not os.path.exists(path_gz):
         logger.error(f"File not found: {path_gz}")
         return pd.DataFrame()
@@ -56,6 +170,9 @@ def read_jsonlines_robust(path_gz, limit=None):
         logger.warning(f"Skipped {skipped} malformed lines in {path_gz}")
     logger.info(f"Read {len(rows)} records from {path_gz}")
     return pd.DataFrame(rows)
+
+# Use the fast version by default
+read_jsonlines_robust = read_jsonlines_robust_fast
 
 def flatten_categories(cat_col):
     """Flatten nested category lists."""
@@ -164,54 +281,100 @@ def sample_like_dcares(
     out = out.drop(columns=[label_col])
     return out
 
-def download_images(df, output_dir='data/amazon_product/images/'): 
-    """Download images from URLs in dataframe."""
+def download_single_image(row, output_dir):
+    """Download a single image. Returns (index, success_status)."""
+    try:
+        img_id = row['asin']
+        img_url = row['imUrl']
+        
+        if pd.isna(img_url) or not str(img_url).startswith('http'):
+            return (row.name, 0)
+            
+        response = requests.get(img_url, timeout=10)
+        response.raise_for_status()
+        
+        img = Image.open(BytesIO(response.content))
+        img.verify()
+        img = Image.open(BytesIO(response.content))
+        
+        img_path = os.path.join(output_dir, f"{img_id}.jpg")
+        img.save(img_path)
+        
+        return (row.name, 1)
+                
+    except Exception as e:
+        return (row.name, 0)
+
+
+def download_images(df, output_dir='data/amazon_product/images/', max_workers=10): 
+    """Download images from URLs in dataframe using parallel processing."""
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Images directory: {output_dir}")
-         
+    logger.info(f"Starting parallel download with {max_workers} workers...")
+    
+    print(f"\n{'='*60}")
+    print(f"🖼️  DOWNLOADING {len(df)} IMAGES...")
+    print(f"{'='*60}")
+    
+    success_dict = {}
     cnt = 0
-    success = []
+    total = len(df)
     
-    for i, row in df.iterrows():
-        try:
-            img_id = row['asin']
-            img_url = row['imUrl']
+    # Use ThreadPoolExecutor for I/O bound tasks
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        download_func = partial(download_single_image, output_dir=output_dir)
+        futures = {executor.submit(download_func, row): idx 
+                  for idx, row in df.iterrows()}
+        
+        # Process completed tasks
+        for future in as_completed(futures):
+            idx, status = future.result()
+            success_dict[idx] = status
             
-            if pd.isna(img_url) or not str(img_url).startswith('http'):
-                success.append(0)
-                continue
-                
-            response = requests.get(img_url, timeout=10)
-            response.raise_for_status()
-            
-            img = Image.open(BytesIO(response.content))
-            # Validate image
-            img.verify()
-            # Reopen after verify
-            img = Image.open(BytesIO(response.content))
-            
-            img_path = os.path.join(output_dir, f"{img_id}.jpg")
-            img.save(img_path)
-            cnt += 1
-            success.append(1)
-            
-            if cnt % 100 == 0:
-                logger.info(f"Downloaded {cnt} images successfully")
-                
-        except Exception as e:
-            logger.debug(f"Failed to download image for {row.get('asin', 'unknown')}: {str(e)}")
-            success.append(0)
+            if status == 1:
+                cnt += 1
+                if cnt % 100 == 0:
+                    progress = cnt / total * 100
+                    print(f"Progress: {cnt}/{total} ({progress:.1f}%) ✓")
+                    logger.info(f"Downloaded {cnt}/{total} images successfully")
     
-    logger.info(f"Total images downloaded: {cnt}/{len(df)}")
+    # Convert dict back to list in original order
+    success = [success_dict.get(idx, 0) for idx in df.index]
+    
+    success_rate = cnt / total * 100
+    print(f"\n✅ Download complete: {cnt}/{total} images ({success_rate:.1f}%)")
+    print(f"{'='*60}\n")
+    
+    logger.info(f"Total images downloaded: {cnt}/{total}")
     return success
 
 
 def main(args):
+    print("\n" + "="*60)
+    print("🚀 AMAZON PRODUCT DATA PREPARATION")
+    print("="*60)
+    print(f"Mode: {args.mode}")
+    print(f"JSON Parser: {args.json_parser}")
+    print(f"Max Workers: {args.max_workers}")
+    print(f"Random Seed: {args.seed}")
+    print("="*60 + "\n")
+    
     mode = args.mode
     data_dir = "data/amazon_product"
     os.makedirs(data_dir, exist_ok=True)
     
+    # Select parser based on argument
+    global read_jsonlines_robust
+    if args.json_parser == "parallel":
+        read_jsonlines_robust = read_jsonlines_robust_parallel
+    elif args.json_parser == "original":
+        read_jsonlines_robust = read_jsonlines_robust_original
+    else:  # fast
+        read_jsonlines_robust = read_jsonlines_robust_fast
+    
     # Download files
+    print("📥 STEP 1/7: Downloading data files...")
     urls = [args.reviews_link, args.meta_link]
     outs = [os.path.join(data_dir, "reviews.json.gz"), os.path.join(data_dir, "metadata.json.gz")]
 
@@ -222,25 +385,33 @@ def main(args):
                 logger.error(f"Failed to download {u}")
                 return
         else:
+            print(f"  ✓ File exists: {os.path.basename(o)}")
             logger.info(f"File already exists: {o}")
 
     # Read data
+    print("\n📖 STEP 2/7: Reading JSON data files...")
     logger.info("Reading metadata...")
     meta = read_jsonlines_robust(outs[1])
+    print(f"  ✓ Metadata: {len(meta):,} records")
+    
     logger.info("Reading reviews...")
     reviews = read_jsonlines_robust(outs[0])
+    print(f"  ✓ Reviews: {len(reviews):,} records")
     
     if meta.empty or reviews.empty:
         logger.error("Failed to read data files")
         return
 
     # Remove old images dir
+    print("\n🗑️  STEP 3/7: Cleaning old data...")
     images_dir = os.path.join(data_dir, "images")
     if os.path.exists(images_dir):
         shutil.rmtree(images_dir, ignore_errors=True)
+        print(f"  ✓ Removed old images directory")
         logger.info(f"Removed old images directory: {images_dir}")
  
     # Process metadata
+    print("\n🔧 STEP 4/7: Processing metadata...")
     required_cols = ["asin", "title", "price", "categories", "description", "imUrl"]
     missing_cols = [col for col in required_cols if col not in meta.columns]
     if missing_cols:
@@ -248,12 +419,17 @@ def main(args):
         return
         
     meta = meta[required_cols].dropna()
+    print(f"  ✓ Filtered metadata: {len(meta):,} records")
     logger.info(f"Metadata records after filtering: {len(meta)}")
     
     meta["categories"] = meta["categories"].apply(flatten_categories)
     
     # Assign labels
     meta["cat_label"] = meta["categories"].apply(assign_label)
+    print(f"\n  Category distribution:")
+    cat_dist = meta['cat_label'].value_counts()
+    for cat, count in cat_dist.items():
+        print(f"    - {cat}: {count:,}")
     logger.info(f"\nCategory distribution:\n{meta['cat_label'].value_counts()}")
 
     # Analyze categories
@@ -284,6 +460,7 @@ def main(args):
     fixed_targets_main = {"men":1200, "women":1500, "shoes":1200, "watches":995}
     
     # Sample data
+    print(f"\n📊 STEP 5/7: Sampling data (mode: {mode})...")
     if mode == "ratio":
         sampled_data = sample_like_dcares(meta, mode="ratio", seed=args.seed, 
                                          ratios=target_ratio, label_map=label_map)
@@ -291,26 +468,34 @@ def main(args):
         sampled_data = sample_like_dcares(meta, mode="fixed", seed=args.seed, 
                                          fixed_targets=fixed_targets_main, label_map=label_map)
     else:
+        print(f"  ⚠️  No sampling applied, using all data")
         sampled_data = meta
     
     if sampled_data.empty:
         logger.error("No data after sampling")
         return
     
+    print(f"  ✓ Sampled data: {len(sampled_data):,} records")
+    
     # Download images
-    success = download_images(sampled_data)
+    print(f"\n🖼️  STEP 6/7: Downloading images...")
+    success = download_images(sampled_data, max_workers=args.max_workers)
     sampled_data["success"] = success
     meta_out = sampled_data[sampled_data["success"] == 1]
     
+    success_rate = len(meta_out) / len(sampled_data) * 100
+    print(f"  ✓ Images saved: {len(meta_out):,}/{len(sampled_data):,} ({success_rate:.1f}%)")
     logger.info(f"Successfully downloaded {len(meta_out)} images")
     
     # Save metadata
     meta_out[["asin", "title", "price", "cat_label", "categories", "description", "imUrl"]].to_csv(
         os.path.join(data_dir, "meta.csv"), index=False
     )
+    print(f"  ✓ Metadata saved: meta.csv")
     logger.info(f"Saved metadata to {os.path.join(data_dir, 'meta.csv')}")
 
     # Process reviews
+    print(f"\n📝 STEP 7/7: Processing reviews and creating splits...")
     df_reviews = reviews
     
     if "asin" not in df_reviews.columns or "asin" not in meta_out.columns:
@@ -318,6 +503,7 @@ def main(args):
         return
 
     # Filter reviews
+    initial_reviews = len(df_reviews)
     df_reviews = df_reviews[df_reviews["asin"].notna()]
     df_reviews = df_reviews.drop_duplicates(subset=["reviewerID", "asin"])
 
@@ -327,6 +513,8 @@ def main(args):
     if "overall" in df_reviews_filtered.columns:
         df_reviews_filtered = df_reviews_filtered[df_reviews_filtered["overall"].between(1, 5)]
     
+    print(f"  Initial reviews: {initial_reviews:,}")
+    print(f"  After filtering: {len(df_reviews_filtered):,}")
     logger.info(f"Filtered reviews: {len(df_reviews_filtered)}")
     df_reviews_filtered.to_csv(os.path.join(data_dir, "reviews.csv"), index=False)
 
@@ -334,6 +522,7 @@ def main(args):
     df = df_reviews_filtered.merge(meta_out, on="asin")
     df["file_path"] = df["asin"].apply(lambda x: os.path.join(data_dir, "images", f"{x}.jpg"))
     
+    print(f"  Merged dataset: {len(df):,} records")
     logger.info(f"Final dataset size: {len(df)}")
     
     train_df, temp_df = train_test_split(df, test_size=0.30, random_state=args.seed, shuffle=True)
@@ -342,6 +531,19 @@ def main(args):
     train_df.to_csv(os.path.join(data_dir, "train.csv"), index=False)
     val_df.to_csv(os.path.join(data_dir, "val.csv"), index=False)
     test_df.to_csv(os.path.join(data_dir, "test.csv"), index=False)
+    
+    # Final summary
+    print("\n" + "="*60)
+    print("📊 FINAL DATASET STATISTICS")
+    print("="*60)
+    print(f"Train set:  {len(train_df):>6,} samples ({len(train_df)/len(df)*100:>5.1f}%)")
+    print(f"Val set:    {len(val_df):>6,} samples ({len(val_df)/len(df)*100:>5.1f}%)")
+    print(f"Test set:   {len(test_df):>6,} samples ({len(test_df)/len(df)*100:>5.1f}%)")
+    print(f"{'-'*60}")
+    print(f"Total:      {len(df):>6,} samples")
+    print("="*60)
+    print("✅ Processing completed successfully!")
+    print("="*60 + "\n")
     
     logger.info(f"Split: Train={len(train_df)}, Val={len(val_df)}, Test={len(test_df)}")
     logger.info("✅ Processing completed successfully!")
@@ -352,6 +554,11 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, default="None", choices=["ratio", "fixed", "None"], 
                        help="Sampling mode: 'ratio' or 'fixed'")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for sampling")
+    parser.add_argument("--json-parser", type=str, default="fast", 
+                       choices=["fast", "parallel", "original"],
+                       help="JSON parser mode: fast (ujson+chunking), parallel (multiprocessing), or original")
+    parser.add_argument("--max-workers", type=int, default=10,
+                       help="Number of parallel workers for image downloading")
     parser.add_argument("--meta_link", type=str, 
                        default="https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Clothing_Shoes_and_Jewelry.json.gz", 
                        help="Link to metadata gz file")
