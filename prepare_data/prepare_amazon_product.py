@@ -616,12 +616,12 @@ def main(args):
         # Map image URL
         if 'imUrl' in meta.columns:
             column_mapping['imUrl'] = 'imUrl'
-        elif 'imageURL' in meta.columns:
-            column_mapping['imUrl'] = 'imageURL'
-            print(f"  ℹ️  Using 'imageURL' instead of 'imUrl'")
         elif 'imageURLHighRes' in meta.columns:
             column_mapping['imUrl'] = 'imageURLHighRes'
             print(f"  ℹ️  Using 'imageURLHighRes' for images")
+        elif 'imageURL' in meta.columns:
+            column_mapping['imUrl'] = 'imageURL'
+            print(f"  ℹ️  Using 'imageURL' instead of 'imUrl'")
         
         # Required columns with flexible names
         base_required = ['asin', 'title', 'price', 'description']
