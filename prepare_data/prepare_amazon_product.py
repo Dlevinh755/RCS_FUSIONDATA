@@ -807,13 +807,129 @@ def main(args):
     try:
         # Choose async or sync based on argument
         if args.async_download:
-            success = download_images_async(sampled_data, max_workers=args.max_workers)
+            success = download_images_async(sampled_data)
         else:
             success = download_images(sampled_data, max_workers=args.max_workers)
         sampled_data["success"] = success
         meta_out = sampled_data[sampled_data["success"] == 1]
-        print("="*60 + "\n")        
+        
+        success_rate = len(meta_out) / len(sampled_data) * 100
+        print(f"  ✓ Images saved: {len(meta_out):,}/{len(sampled_data):,} ({success_rate:.1f}%)")
+        logger.info(f"Successfully downloaded {len(meta_out)} images")
+    except Exception as e:
+        print(f"  ❌ Error downloading images: {e}")
+        logger.error(f"Error downloading images: {e}", exc_info=True)
+        return
+    
+    # Save metadata
+    try:
+        # Build save columns list dynamically
+        save_cols = ['asin']
+        for col in ['title', 'price', 'cat_label', 'categories', 'description', 'imUrl']:
+            if col in meta_out.columns:
+                save_cols.append(col)
+        
+        meta_out[save_cols].to_csv(
+            os.path.join(data_dir, "meta.csv"), index=False
+        )
+        print(f"  ✓ Metadata saved: meta.csv (columns: {save_cols})")
+        logger.info(f"Saved metadata to {os.path.join(data_dir, 'meta.csv')}")
+    except Exception as e:
+        print(f"  ❌ Error saving metadata: {e}")
+        logger.error(f"Error saving metadata: {e}", exc_info=True)
+
+    # Process reviews
+    print(f"\n📝 STEP 7/7: Processing reviews and creating splits...")
+    try:
+        df_reviews = reviews
+        
+        if "asin" not in df_reviews.columns or "asin" not in meta_out.columns:
+            print(f"  ❌ Missing 'asin' column")
+            logger.error("Missing 'asin' column in reviews or metadata")
+            return
+
+        # Filter reviews
+        initial_reviews = len(df_reviews)
+        df_reviews = df_reviews[df_reviews["asin"].notna()]
+        
+        # Check if reviewerID exists
+        if "reviewerID" in df_reviews.columns:
+            df_reviews = df_reviews.drop_duplicates(subset=["reviewerID", "asin"])
+        else:
+            print(f"  ⚠️  'reviewerID' not found, skipping deduplication")
+            df_reviews = df_reviews.drop_duplicates(subset=["asin"])
+
+        meta_asin_set = set(meta_out["asin"].unique())
+        df_reviews_filtered = df_reviews[df_reviews["asin"].isin(meta_asin_set)].copy()
+
+        if "overall" in df_reviews_filtered.columns:
+            df_reviews_filtered = df_reviews_filtered[df_reviews_filtered["overall"].between(1, 5)]
+        
+        print(f"  Initial reviews: {initial_reviews:,}")
+        print(f"  After filtering: {len(df_reviews_filtered):,}")
+        
+        # Check if we have any reviews
+        if len(df_reviews_filtered) == 0:
+            print(f"  ⚠️  No reviews matched with products")
+            print(f"  Sample product ASINs: {list(meta_asin_set)[:5]}")
+            print(f"  Sample review ASINs: {df_reviews['asin'].head(5).tolist()}")
+            
+            # Save what we have so far
+            meta_out.to_csv(os.path.join(data_dir, "products_only.csv"), index=False)
+            print(f"  ✓ Saved products to products_only.csv (no reviews matched)")
+            
+            print("\n" + "="*60)
+            print("⚠️  PROCESSING COMPLETED WITH WARNINGS")
+            print("="*60)
+            print(f"Products: {len(meta_out):,}")
+            print(f"Reviews:  0 (no matches)")
+            print("="*60 + "\n")
+            return
+        
+        logger.info(f"Filtered reviews: {len(df_reviews_filtered)}")
+        df_reviews_filtered.to_csv(os.path.join(data_dir, "reviews.csv"), index=False)
+
+        # Merge and split
+        df = df_reviews_filtered.merge(meta_out, on="asin")
+        df["file_path"] = df["asin"].apply(lambda x: os.path.join(data_dir, "images", f"{x}.jpg"))
+        
+        print(f"  Merged dataset: {len(df):,} records")
+        logger.info(f"Final dataset size: {len(df)}")
+        
+        # Check if we have enough data to split
+        if len(df) < 10:
+            print(f"  ⚠️  Dataset too small ({len(df)} records) - saving without splitting")
+            df.to_csv(os.path.join(data_dir, "full_data.csv"), index=False)
+            
+            print("\n" + "="*60)
+            print("⚠️  PROCESSING COMPLETED WITH WARNINGS")
+            print("="*60)
+            print(f"Total samples: {len(df)} (too small to split)")
+            print("="*60 + "\n")
+            return
+        
+        train_df, temp_df = train_test_split(df, test_size=0.30, random_state=args.seed, shuffle=True)
+        val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=args.seed, shuffle=True)
+        
+        df.to_csv(os.path.join(data_dir, "full_data.csv"), index=False)
+        train_df.to_csv(os.path.join(data_dir, "train.csv"), index=False)
+        val_df.to_csv(os.path.join(data_dir, "val.csv"), index=False)
+        test_df.to_csv(os.path.join(data_dir, "test.csv"), index=False)
+        
+        # Final summary
+        print("\n" + "="*60)
+        print("📊 FINAL DATASET STATISTICS")
+        print("="*60)
+        print(f"Train set:  {len(train_df):>6,} samples ({len(train_df)/len(df)*100:>5.1f}%)")
+        print(f"Val set:    {len(val_df):>6,} samples ({len(val_df)/len(df)*100:>5.1f}%)")
+        print(f"Test set:   {len(test_df):>6,} samples ({len(test_df)/len(df)*100:>5.1f}%)")
+        print(f"{'-'*60}")
+        print(f"Total:      {len(df):>6,} samples")
+        print("="*60)
         print("✅ Processing completed successfully!")
+        print("="*60 + "\n")
+        
+        logger.info(f"Split: Train={len(train_df)}, Val={len(val_df)}, Test={len(test_df)}")
         logger.info("✅ Processing completed successfully!")
         
     except Exception as e:
@@ -832,8 +948,10 @@ if __name__ == "__main__":
     parser.add_argument("--json-parser", type=str, default="fast", 
                        choices=["fast", "parallel", "original"],
                        help="JSON parser mode: fast (ujson+chunking), parallel (multiprocessing), or original")
-    parser.add_argument("--max-workers", type=int, default=100,
+    parser.add_argument("--max-workers", type=int, default=50,
                        help="Number of parallel workers for image downloading")
+    parser.add_argument("--async-download", action="store_true",
+                       help="Use async download (faster but requires aiohttp)")
     parser.add_argument("--meta_link", type=str, 
                        default="https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Clothing_Shoes_and_Jewelry.json.gz", 
                        help="Link to metadata gz file")
