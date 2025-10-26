@@ -50,7 +50,7 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
         users = {u:i for i,u in enumerate(df['reviewerID'].astype(str).unique())}
         items = {a:i for i,a in enumerate(df['asin'].astype(str).unique())}
     else:
-        df = filter_valid_rows(df)
+        #df = filter_valid_rows(df)
 
         users = {u:i for i,u in enumerate(df['reviewerID'].astype(str).unique())}
         items = {a:i for i,a in enumerate(df['asin'].astype(str).unique())}
