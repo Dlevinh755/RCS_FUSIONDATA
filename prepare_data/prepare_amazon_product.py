@@ -488,12 +488,33 @@ def main(args):
         print(f"  Processing categories...")
         # Handle both list and string categories
         def safe_flatten_categories(cat_col):
-            if pd.isna(cat_col):
+            # Handle None/NaN
+            if cat_col is None:
                 return []
+            
+            # Handle pandas NA/NaN - check type first
+            try:
+                if isinstance(cat_col, float) and np.isnan(cat_col):
+                    return []
+            except (TypeError, ValueError):
+                pass
+            
+            # Handle numpy array
+            if isinstance(cat_col, np.ndarray):
+                cat_col = cat_col.tolist()
+            
+            # Handle string
             if isinstance(cat_col, str):
-                # Single string category - wrap in list
+                if not cat_col or cat_col.strip() == '':
+                    return []
                 return [cat_col.strip()]
-            return flatten_categories(cat_col)
+            
+            # Handle list
+            if isinstance(cat_col, list):
+                return flatten_categories(cat_col)
+            
+            # Fallback - convert to string
+            return [str(cat_col).strip()]
         
         meta["categories"] = meta["categories"].apply(safe_flatten_categories)
         print(f"  ✓ Categories processed")
