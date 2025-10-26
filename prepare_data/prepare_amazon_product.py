@@ -390,15 +390,21 @@ def main(args):
 
     # Read data
     print("\n📖 STEP 2/7: Reading JSON data files...")
-    logger.info("Reading metadata...")
-    meta = read_jsonlines_robust(outs[1])
-    print(f"  ✓ Metadata: {len(meta):,} records")
-    
-    logger.info("Reading reviews...")
-    reviews = read_jsonlines_robust(outs[0])
-    print(f"  ✓ Reviews: {len(reviews):,} records")
+    try:
+        logger.info("Reading metadata...")
+        meta = read_jsonlines_robust(outs[1])
+        print(f"  ✓ Metadata: {len(meta):,} records")
+        
+        logger.info("Reading reviews...")
+        reviews = read_jsonlines_robust(outs[0])
+        print(f"  ✓ Reviews: {len(reviews):,} records")
+    except Exception as e:
+        print(f"  ❌ Error reading data: {e}")
+        logger.error(f"Error reading data: {e}", exc_info=True)
+        return
     
     if meta.empty or reviews.empty:
+        print("  ❌ Empty dataframes after reading")
         logger.error("Failed to read data files")
         return
 
@@ -412,33 +418,80 @@ def main(args):
  
     # Process metadata
     print("\n🔧 STEP 4/7: Processing metadata...")
-    required_cols = ["asin", "title", "price", "categories", "description", "imUrl"]
-    missing_cols = [col for col in required_cols if col not in meta.columns]
-    if missing_cols:
-        logger.error(f"Missing required columns in metadata: {missing_cols}")
-        return
+    try:
+        # Check available columns
+        print(f"  Available columns: {list(meta.columns)[:10]}...")
         
-    meta = meta[required_cols].dropna()
-    print(f"  ✓ Filtered metadata: {len(meta):,} records")
-    logger.info(f"Metadata records after filtering: {len(meta)}")
-    
-    meta["categories"] = meta["categories"].apply(flatten_categories)
-    
-    # Assign labels
-    meta["cat_label"] = meta["categories"].apply(assign_label)
-    print(f"\n  Category distribution:")
-    cat_dist = meta['cat_label'].value_counts()
-    for cat, count in cat_dist.items():
-        print(f"    - {cat}: {count:,}")
-    logger.info(f"\nCategory distribution:\n{meta['cat_label'].value_counts()}")
+        required_cols = ["asin", "title", "price", "categories", "description", "imUrl"]
+        missing_cols = [col for col in required_cols if col not in meta.columns]
+        
+        if missing_cols:
+            print(f"  ❌ Missing columns: {missing_cols}")
+            logger.error(f"Missing required columns in metadata: {missing_cols}")
+            # Try to continue with available columns
+            available_required = [col for col in required_cols if col in meta.columns]
+            if len(available_required) < 3:  # Need at least asin, categories, and one more
+                print(f"  ❌ Too few required columns available")
+                return
+            print(f"  ⚠️  Continuing with available columns: {available_required}")
+            required_cols = available_required
+        
+        print(f"  ✓ All required columns present")
+        
+        # Filter data
+        print(f"  Filtering data...")
+        initial_count = len(meta)
+        meta = meta[required_cols].dropna()
+        filtered_count = len(meta)
+        print(f"  ✓ Filtered: {initial_count:,} → {filtered_count:,} records (removed {initial_count - filtered_count:,})")
+        logger.info(f"Metadata records after filtering: {len(meta)}")
+        
+        if len(meta) == 0:
+            print(f"  ❌ No records left after filtering!")
+            return
+        
+        # Flatten categories
+        print(f"  Processing categories...")
+        meta["categories"] = meta["categories"].apply(flatten_categories)
+        print(f"  ✓ Categories flattened")
+        
+        # Assign labels
+        print(f"  Assigning labels...")
+        meta["cat_label"] = meta["categories"].apply(assign_label)
+        
+        # Check if we have valid labels
+        valid_labels = meta["cat_label"].notna().sum()
+        print(f"  ✓ Labels assigned: {valid_labels:,}/{len(meta):,} records")
+        
+        if valid_labels == 0:
+            print(f"  ❌ No valid category labels found!")
+            print(f"  Sample categories: {meta['categories'].head(3).tolist()}")
+            return
+        
+        print(f"\n  Category distribution:")
+        cat_dist = meta['cat_label'].value_counts()
+        for cat, count in cat_dist.items():
+            if pd.notna(cat):
+                print(f"    - {cat}: {count:,}")
+        logger.info(f"\nCategory distribution:\n{meta['cat_label'].value_counts()}")
+        
+    except Exception as e:
+        print(f"  ❌ Error in STEP 4: {e}")
+        logger.error(f"Error processing metadata: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
+        return
 
     # Analyze categories
-    counter = Counter()
-    meta["categories"].apply(lambda lst: counter.update(lst))
+    try:
+        counter = Counter()
+        meta["categories"].apply(lambda lst: counter.update(lst))
 
-    top_tags = counter.most_common(20)
-    top_df = pd.DataFrame(top_tags, columns=["Tag", "Count"])
-    logger.info(f"\nTop 20 tags:\n{top_df}")
+        top_tags = counter.most_common(20)
+        top_df = pd.DataFrame(top_tags, columns=["Tag", "Count"])
+        logger.info(f"\nTop 20 tags:\n{top_df}")
+    except Exception as e:
+        print(f"  ⚠️  Warning: Could not analyze categories: {e}")
 
     # Map labels
     label_map = {
@@ -461,92 +514,127 @@ def main(args):
     
     # Sample data
     print(f"\n📊 STEP 5/7: Sampling data (mode: {mode})...")
-    if mode == "ratio":
-        sampled_data = sample_like_dcares(meta, mode="ratio", seed=args.seed, 
-                                         ratios=target_ratio, label_map=label_map)
-    elif mode == "fixed":
-        sampled_data = sample_like_dcares(meta, mode="fixed", seed=args.seed, 
-                                         fixed_targets=fixed_targets_main, label_map=label_map)
-    else:
-        print(f"  ⚠️  No sampling applied, using all data")
-        sampled_data = meta
-    
-    if sampled_data.empty:
-        logger.error("No data after sampling")
+    try:
+        if mode == "ratio":
+            sampled_data = sample_like_dcares(meta, mode="ratio", seed=args.seed, 
+                                             ratios=target_ratio, label_map=label_map)
+        elif mode == "fixed":
+            sampled_data = sample_like_dcares(meta, mode="fixed", seed=args.seed, 
+                                             fixed_targets=fixed_targets_main, label_map=label_map)
+        else:
+            print(f"  ⚠️  No sampling applied, using all data")
+            sampled_data = meta
+        
+        if sampled_data.empty:
+            print(f"  ❌ No data after sampling")
+            logger.error("No data after sampling")
+            return
+        
+        print(f"  ✓ Sampled data: {len(sampled_data):,} records")
+        
+    except Exception as e:
+        print(f"  ❌ Error in sampling: {e}")
+        logger.error(f"Error in sampling: {e}", exc_info=True)
         return
-    
-    print(f"  ✓ Sampled data: {len(sampled_data):,} records")
     
     # Download images
     print(f"\n🖼️  STEP 6/7: Downloading images...")
-    success = download_images(sampled_data, max_workers=args.max_workers)
-    sampled_data["success"] = success
-    meta_out = sampled_data[sampled_data["success"] == 1]
-    
-    success_rate = len(meta_out) / len(sampled_data) * 100
-    print(f"  ✓ Images saved: {len(meta_out):,}/{len(sampled_data):,} ({success_rate:.1f}%)")
-    logger.info(f"Successfully downloaded {len(meta_out)} images")
+    try:
+        success = download_images(sampled_data, max_workers=args.max_workers)
+        sampled_data["success"] = success
+        meta_out = sampled_data[sampled_data["success"] == 1]
+        
+        success_rate = len(meta_out) / len(sampled_data) * 100
+        print(f"  ✓ Images saved: {len(meta_out):,}/{len(sampled_data):,} ({success_rate:.1f}%)")
+        logger.info(f"Successfully downloaded {len(meta_out)} images")
+    except Exception as e:
+        print(f"  ❌ Error downloading images: {e}")
+        logger.error(f"Error downloading images: {e}", exc_info=True)
+        return
     
     # Save metadata
-    meta_out[["asin", "title", "price", "cat_label", "categories", "description", "imUrl"]].to_csv(
-        os.path.join(data_dir, "meta.csv"), index=False
-    )
-    print(f"  ✓ Metadata saved: meta.csv")
-    logger.info(f"Saved metadata to {os.path.join(data_dir, 'meta.csv')}")
+    try:
+        save_cols = [col for col in ["asin", "title", "price", "cat_label", "categories", "description", "imUrl"] 
+                     if col in meta_out.columns]
+        meta_out[save_cols].to_csv(
+            os.path.join(data_dir, "meta.csv"), index=False
+        )
+        print(f"  ✓ Metadata saved: meta.csv")
+        logger.info(f"Saved metadata to {os.path.join(data_dir, 'meta.csv')}")
+    except Exception as e:
+        print(f"  ❌ Error saving metadata: {e}")
+        logger.error(f"Error saving metadata: {e}", exc_info=True)
 
     # Process reviews
     print(f"\n📝 STEP 7/7: Processing reviews and creating splits...")
-    df_reviews = reviews
-    
-    if "asin" not in df_reviews.columns or "asin" not in meta_out.columns:
-        logger.error("Missing 'asin' column in reviews or metadata")
+    try:
+        df_reviews = reviews
+        
+        if "asin" not in df_reviews.columns or "asin" not in meta_out.columns:
+            print(f"  ❌ Missing 'asin' column")
+            logger.error("Missing 'asin' column in reviews or metadata")
+            return
+
+        # Filter reviews
+        initial_reviews = len(df_reviews)
+        df_reviews = df_reviews[df_reviews["asin"].notna()]
+        
+        # Check if reviewerID exists
+        if "reviewerID" in df_reviews.columns:
+            df_reviews = df_reviews.drop_duplicates(subset=["reviewerID", "asin"])
+        else:
+            print(f"  ⚠️  'reviewerID' not found, skipping deduplication")
+            df_reviews = df_reviews.drop_duplicates(subset=["asin"])
+
+        meta_asin_set = set(meta_out["asin"].unique())
+        df_reviews_filtered = df_reviews[df_reviews["asin"].isin(meta_asin_set)].copy()
+
+        if "overall" in df_reviews_filtered.columns:
+            df_reviews_filtered = df_reviews_filtered[df_reviews_filtered["overall"].between(1, 5)]
+        
+        print(f"  Initial reviews: {initial_reviews:,}")
+        print(f"  After filtering: {len(df_reviews_filtered):,}")
+        logger.info(f"Filtered reviews: {len(df_reviews_filtered)}")
+        df_reviews_filtered.to_csv(os.path.join(data_dir, "reviews.csv"), index=False)
+
+        # Merge and split
+        df = df_reviews_filtered.merge(meta_out, on="asin")
+        df["file_path"] = df["asin"].apply(lambda x: os.path.join(data_dir, "images", f"{x}.jpg"))
+        
+        print(f"  Merged dataset: {len(df):,} records")
+        logger.info(f"Final dataset size: {len(df)}")
+
+        
+        train_df, temp_df = train_test_split(df, test_size=0.30, random_state=args.seed, shuffle=True)
+        val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=args.seed, shuffle=True)
+        
+        df.to_csv(os.path.join(data_dir, "full_data.csv"), index=False)
+        train_df.to_csv(os.path.join(data_dir, "train.csv"), index=False)
+        val_df.to_csv(os.path.join(data_dir, "val.csv"), index=False)
+        test_df.to_csv(os.path.join(data_dir, "test.csv"), index=False)
+        
+        # Final summary
+        print("\n" + "="*60)
+        print("📊 FINAL DATASET STATISTICS")
+        print("="*60)
+        print(f"Train set:  {len(train_df):>6,} samples ({len(train_df)/len(df)*100:>5.1f}%)")
+        print(f"Val set:    {len(val_df):>6,} samples ({len(val_df)/len(df)*100:>5.1f}%)")
+        print(f"Test set:   {len(test_df):>6,} samples ({len(test_df)/len(df)*100:>5.1f}%)")
+        print(f"{'-'*60}")
+        print(f"Total:      {len(df):>6,} samples")
+        print("="*60)
+        print("✅ Processing completed successfully!")
+        print("="*60 + "\n")
+        
+        logger.info(f"Split: Train={len(train_df)}, Val={len(val_df)}, Test={len(test_df)}")
+        logger.info("✅ Processing completed successfully!")
+        
+    except Exception as e:
+        print(f"  ❌ Error in STEP 7: {e}")
+        logger.error(f"Error processing reviews: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
         return
-
-    # Filter reviews
-    initial_reviews = len(df_reviews)
-    df_reviews = df_reviews[df_reviews["asin"].notna()]
-    df_reviews = df_reviews.drop_duplicates(subset=["reviewerID", "asin"])
-
-    meta_asin_set = set(meta_out["asin"].unique())
-    df_reviews_filtered = df_reviews[df_reviews["asin"].isin(meta_asin_set)].copy()
-
-    if "overall" in df_reviews_filtered.columns:
-        df_reviews_filtered = df_reviews_filtered[df_reviews_filtered["overall"].between(1, 5)]
-    
-    print(f"  Initial reviews: {initial_reviews:,}")
-    print(f"  After filtering: {len(df_reviews_filtered):,}")
-    logger.info(f"Filtered reviews: {len(df_reviews_filtered)}")
-    df_reviews_filtered.to_csv(os.path.join(data_dir, "reviews.csv"), index=False)
-
-    # Merge and split
-    df = df_reviews_filtered.merge(meta_out, on="asin")
-    df["file_path"] = df["asin"].apply(lambda x: os.path.join(data_dir, "images", f"{x}.jpg"))
-    
-    print(f"  Merged dataset: {len(df):,} records")
-    logger.info(f"Final dataset size: {len(df)}")
-    
-    train_df, temp_df = train_test_split(df, test_size=0.30, random_state=args.seed, shuffle=True)
-    val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=args.seed, shuffle=True)
-
-    train_df.to_csv(os.path.join(data_dir, "train.csv"), index=False)
-    val_df.to_csv(os.path.join(data_dir, "val.csv"), index=False)
-    test_df.to_csv(os.path.join(data_dir, "test.csv"), index=False)
-    
-    # Final summary
-    print("\n" + "="*60)
-    print("📊 FINAL DATASET STATISTICS")
-    print("="*60)
-    print(f"Train set:  {len(train_df):>6,} samples ({len(train_df)/len(df)*100:>5.1f}%)")
-    print(f"Val set:    {len(val_df):>6,} samples ({len(val_df)/len(df)*100:>5.1f}%)")
-    print(f"Test set:   {len(test_df):>6,} samples ({len(test_df)/len(df)*100:>5.1f}%)")
-    print(f"{'-'*60}")
-    print(f"Total:      {len(df):>6,} samples")
-    print("="*60)
-    print("✅ Processing completed successfully!")
-    print("="*60 + "\n")
-    
-    logger.info(f"Split: Train={len(train_df)}, Val={len(val_df)}, Test={len(test_df)}")
-    logger.info("✅ Processing completed successfully!")
 
 
 if __name__ == "__main__":
