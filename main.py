@@ -16,6 +16,7 @@ def main(args):
         # Tạo đường dẫn tuyệt đối cho file ảnh
         df["file_path"] = df["asin"].apply(lambda x: str(args.data_path + "/images/" + f"{x}.jpg"))
     else:
+        print("No data path provided, using default dataset.")
         df = None
     model, metrics = trainmlp(df, batch_size=args.batch_size, lr=args.lr, epochs=args.epochs, patience=args.patience, heads=args.heads, device=device)
     model_path = "mlp_camrec_model.pth"

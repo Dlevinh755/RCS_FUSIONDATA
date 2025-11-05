@@ -41,7 +41,7 @@ class AmazonReviewDataset(Dataset):
         uid = self.user2idx[row['reviewerID']]
         iid = self.item2idx[row['asin']]
         y = float(row['overall'])
-        text = str(row['description'])
+        text = str(row['reviewText']) if pd.notna(row['reviewText']) else ""
         # Tokenize RoBERTa
         enc = self.tok(
             text, padding='max_length', truncation=True, max_length=self.max_len, return_tensors='pt'
