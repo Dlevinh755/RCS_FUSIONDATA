@@ -73,7 +73,7 @@ class AmazonReviewDataset(Dataset):
                 hist_tensor[item_idx] = rating
 
         y = float(row['overall'])
-        text = str(row.get('reviewText', ""))  # hoặc 'description'
+        text = str(row.get('description', ""))  # hoặc 'description'
 
         enc = self.tok(
             text,
