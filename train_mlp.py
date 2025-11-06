@@ -66,7 +66,7 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
     val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=2)
     test_dl  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=2)
 
-    history_dim = pivot_df.shape[1]  # hoặc bạn lưu trong dataset và lấy ra
+    history_dim = pd.pivot_table(df, values='overall', index='reviewerID', columns='asin', aggfunc='mean', fill_value=0).shape[1]  # hoặc bạn lưu trong dataset và lấy ra
 
     model = CAMRec(
         n_users=len(users),
