@@ -56,9 +56,13 @@ class AmazonReviewDataset(Dataset):
 
         # lấy history của đúng user này
         user_id = row['reviewerID']
+        current_asin = row['asin']  # Get the actual ASIN
         price = row.get('price', 0.0)
         historical_ratings = self.pivot_df.loc[user_id].fillna(0.0)
-        historical_ratings.loc[iid] = 0.0
+        
+        # Mask current item using ASIN, not index
+        if current_asin in historical_ratings.index:
+            historical_ratings.loc[current_asin] = 0.0
          
         # Create a fixed-size tensor for all items
         hist_tensor = torch.zeros(self.n_items, dtype=torch.float32)
