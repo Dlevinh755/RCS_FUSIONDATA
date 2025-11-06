@@ -101,6 +101,25 @@ class AmazonReviewDataset(Dataset):
     def __len__(self):
         return len(self.df)
     
+    def get_user_history_tensor(self, user_id: str, current_asin: str = None) -> torch.Tensor:
+        """Get historical ratings tensor for a specific user"""
+        if user_id not in self.pivot_df.index:
+            return torch.zeros(self.n_items, dtype=torch.float32)
+        
+        historical_ratings = self.pivot_df.loc[user_id].fillna(0.0)
+        
+        # Mask current item if provided
+        if current_asin and current_asin in historical_ratings.index:
+            historical_ratings.loc[current_asin] = 0.0
+        
+        # Create fixed-size tensor
+        hist_tensor = torch.zeros(self.n_items, dtype=torch.float32)
+        for asin, rating in historical_ratings.items():
+            if asin in self.item2idx:
+                item_idx = self.item2idx[asin]
+                hist_tensor[item_idx] = rating
+        
+        return hist_tensor
 
 def filter_valid_rows(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
