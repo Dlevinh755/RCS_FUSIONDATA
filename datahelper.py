@@ -18,7 +18,19 @@ img_tf = transforms.Compose([
 class AmazonReviewDataset(Dataset):
     def __init__(self, df: pd.DataFrame, user2idx, item2idx, tokenizer, max_len=128):
         self.df = df.reset_index(drop=True)
-        self.user2idx, self.item2idx = user2idx, item2idx
+
+        # tạo user-item rating matrix
+        self.pivot_df = pd.pivot_table(
+            self.df,
+            values='overall',
+            index='reviewerID',
+            columns='asin',
+            aggfunc='mean',
+            fill_value=0
+        )
+
+        self.user2idx = user2idx
+        self.item2idx = item2idx
         self.tok = tokenizer
         self.max_len = max_len
 
@@ -29,10 +41,8 @@ class AmazonReviewDataset(Dataset):
             return torch.zeros(3, IMG_SIZE, IMG_SIZE)
         try:
             with Image.open(path).convert('RGB') as im:
-                t = img_tf(im)  # Apply transforms trực tiếp lên PIL Image
-                return t
+                return img_tf(im)
         except Exception as e:
-            # Xử lý lỗi khi load ảnh bị corrupt
             print(f"Error loading image {path}: {e}")
             return torch.zeros(3, IMG_SIZE, IMG_SIZE)
 
@@ -40,21 +50,36 @@ class AmazonReviewDataset(Dataset):
         row = self.df.iloc[idx]
         uid = self.user2idx[row['reviewerID']]
         iid = self.item2idx[row['asin']]
+
+        # lấy history của đúng user này
+        user_id = row['reviewerID']
+        price = row.get('price', 0.0)
+        historical_ratings = self.pivot_df.loc[user_id].fillna(0.0)
+        hist_tensor = torch.as_tensor(historical_ratings.values, dtype=torch.float32)
+
         y = float(row['overall'])
-        text = str(row['reviewText']) if pd.notna(row['reviewText']) else ""
-        # Tokenize RoBERTa
+        text = str(row.get('reviewText', ""))  # hoặc 'description'
+
         enc = self.tok(
-            text, padding='max_length', truncation=True, max_length=self.max_len, return_tensors='pt'
+            text,
+            padding='max_length',
+            truncation=True,
+            max_length=self.max_len,
+            return_tensors='pt'
         )
-        # Image
-        img_tensor = self._load_image_tensor(row['file_path'])  # (3,224,224)
+
+        img_tensor = self._load_image_tensor(row['file_path'])
+
         sample = {
             'user_idx': torch.tensor(uid, dtype=torch.long),
             'item_idx': torch.tensor(iid, dtype=torch.long),
             'input_ids': enc['input_ids'].squeeze(0),
             'attention_mask': enc['attention_mask'].squeeze(0),
+            
             'image': img_tensor,
             'rating': torch.tensor(y, dtype=torch.float32),
+            'historical_ratings': hist_tensor,
+            'price': torch.tensor(price, dtype=torch.float32),
         }
         return sample
 

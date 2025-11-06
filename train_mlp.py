@@ -13,8 +13,6 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
     best_val = float('inf') 
     best_state = None 
     bad = 0 
-    
-    
 
     tok = AutoTokenizer.from_pretrained('roberta-base')
 
@@ -68,7 +66,17 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
     val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=2)
     test_dl  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=2)
 
-    model = CAMRec(n_users=len(users), n_items=len(items), user_dim=128, item_dim=128, proj_dim=256, heads=heads).to(device)
+    history_dim = pivot_df.shape[1]  # hoặc bạn lưu trong dataset và lấy ra
+
+    model = CAMRec(
+        n_users=len(users),
+        n_items=len(items),
+        user_dim=128,
+        item_dim=128,
+        proj_dim=256,
+        heads=4,
+        history_dim=history_dim,
+    ).to(device)
     model.text_enc.eval()
     model.img_enc.eval()
     optim = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr)
