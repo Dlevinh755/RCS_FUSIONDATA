@@ -28,6 +28,9 @@ class AmazonReviewDataset(Dataset):
             aggfunc='mean',
             fill_value=0
         )
+        
+        # Store the number of items for consistent history size
+        self.n_items = len(item2idx)
 
         self.user2idx = user2idx
         self.item2idx = item2idx
@@ -55,7 +58,14 @@ class AmazonReviewDataset(Dataset):
         user_id = row['reviewerID']
         price = row.get('price', 0.0)
         historical_ratings = self.pivot_df.loc[user_id].fillna(0.0)
-        hist_tensor = torch.as_tensor(historical_ratings.values, dtype=torch.float32)
+        
+        # Create a fixed-size tensor for all items
+        hist_tensor = torch.zeros(self.n_items, dtype=torch.float32)
+        # Map the pivot columns to the correct item indices
+        for asin, rating in historical_ratings.items():
+            if asin in self.item2idx:
+                item_idx = self.item2idx[asin]
+                hist_tensor[item_idx] = rating
 
         y = float(row['overall'])
         text = str(row.get('reviewText', ""))  # hoặc 'description'
