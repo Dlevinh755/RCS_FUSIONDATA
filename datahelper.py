@@ -58,7 +58,8 @@ class AmazonReviewDataset(Dataset):
         user_id = row['reviewerID']
         price = row.get('price', 0.0)
         historical_ratings = self.pivot_df.loc[user_id].fillna(0.0)
-        
+        historical_ratings.loc[iid] = 0.0
+         
         # Create a fixed-size tensor for all items
         hist_tensor = torch.zeros(self.n_items, dtype=torch.float32)
         # Map the pivot columns to the correct item indices
