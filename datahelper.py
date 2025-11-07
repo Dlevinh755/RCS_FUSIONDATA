@@ -16,18 +16,11 @@ img_tf = transforms.Compose([
 
 
 class AmazonReviewDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, user2idx, item2idx, tokenizer, max_len=128):
+    def __init__(self, df: pd.DataFrame, user2idx, item2idx, tokenizer, history_dim, max_len=128):
         self.df = df.reset_index(drop=True)
 
         # tạo user-item rating matrix
-        self.pivot_df = pd.pivot_table(
-            self.df,
-            values='overall',
-            index='reviewerID',
-            columns='asin',
-            aggfunc='mean',
-            fill_value=0
-        )
+        self.pivot_df = history_dim
         
         # Store the number of items for consistent history size
         self.n_items = len(item2idx)

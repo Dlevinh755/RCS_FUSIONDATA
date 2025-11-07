@@ -57,16 +57,16 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
         val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=42, shuffle=True)
 
     
+    history_dim = pd.pivot_table(df, values='overall', index='reviewerID', columns='asin', aggfunc='mean', fill_value=0).shape[1]  # hoặc bạn lưu trong dataset và lấy ra
 
-
-    train_ds = AmazonReviewDataset(train_df, users, items, tok, max_len=128)
-    val_ds   = AmazonReviewDataset(val_df,   users, items, tok, max_len=128)
-    test_ds  = AmazonReviewDataset(test_df,  users, items, tok, max_len=128)
+    train_ds = AmazonReviewDataset(train_df, users, items, tok, history_dim=history_dim, max_len=128)
+    val_ds   = AmazonReviewDataset(val_df,   users, items, tok, history_dim=history_dim, max_len=128)
+    test_ds  = AmazonReviewDataset(test_df,  users, items, tok, history_dim=history_dim, max_len=128)
     train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=2)
     val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=2)
     test_dl  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=2)
 
-    history_dim = pd.pivot_table(df, values='overall', index='reviewerID', columns='asin', aggfunc='mean', fill_value=0).shape[1]  # hoặc bạn lưu trong dataset và lấy ra
+    
 
     model = CAMRec(
         n_users=len(users),
