@@ -57,11 +57,22 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
         val_df, test_df = train_test_split(temp_df, test_size=(2/3), random_state=42, shuffle=True)
 
     
-    history_dim = pd.pivot_table(df, values='overall', index='reviewerID', columns='asin', aggfunc='mean', fill_value=0).shape[1]  # hoặc bạn lưu trong dataset và lấy ra
-
-    train_ds = AmazonReviewDataset(train_df, users, items, tok, history_dim=history_dim, max_len=128)
-    val_ds   = AmazonReviewDataset(val_df,   users, items, tok, history_dim=history_dim, max_len=128)
-    test_ds  = AmazonReviewDataset(test_df,  users, items, tok, history_dim=history_dim, max_len=128)
+    # Tạo PIVOT TABLE (DataFrame), không chỉ lấy shape
+    full_pivot = pd.pivot_table(
+        df, 
+        values='overall', 
+        index='reviewerID', 
+        columns='asin', 
+        aggfunc='mean', 
+        fill_value=0
+    )
+    
+    print(f"Pivot table shape: {full_pivot.shape}")  # Debug info
+    
+    # Truyền PIVOT TABLE vào dataset, không phải số cột
+    train_ds = AmazonReviewDataset(train_df, users, items, tok, history_dim=full_pivot, max_len=128)
+    val_ds   = AmazonReviewDataset(val_df,   users, items, tok, history_dim=full_pivot, max_len=128)
+    test_ds  = AmazonReviewDataset(test_df,  users, items, tok, history_dim=full_pivot, max_len=128)
     train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=2)
     val_dl   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=2)
     test_dl  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=2)
@@ -75,7 +86,7 @@ def trainmlp(df: pd.DataFrame = None, batch_size=16, lr=1e-3, epochs=50, patienc
         item_dim=128,
         proj_dim=256,
         heads=4,
-        history_dim=history_dim,
+        history_dim=full_pivot.shape[1],  # ✅ Model chỉ cần số cột
     ).to(device)
     model.text_enc.eval()
     model.img_enc.eval()
