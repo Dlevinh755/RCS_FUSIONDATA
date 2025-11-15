@@ -40,7 +40,7 @@ class AmazonReviewDataset(Dataset):
         # Cache unique images
         unique_paths = self.df['file_path'].unique()
         for path in tqdm(unique_paths, desc="Caching images"):
-            self._image_cache[path] = self._load_image_tensor_internal(path)
+            self._image_cache[path] = self._load_image_tensor(path)
         
         # Cache unique texts  
         unique_texts = self.df['description'].fillna("").astype(str).unique()
