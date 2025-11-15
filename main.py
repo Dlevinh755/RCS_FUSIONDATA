@@ -3,6 +3,9 @@ import torch
 
 from load_data import load_data
 from model.__init__ import CAMRec_train, LightGNN_train
+import os
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 def main(args):

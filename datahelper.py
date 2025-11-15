@@ -58,14 +58,28 @@ class AmazonReviewDataset(Dataset):
                     'attention_mask': enc['attention_mask'].squeeze(0)
                 }
         
+        # 👈 Add default fallback for empty text
+        if "" not in self._text_cache:
+            enc = self.tok(
+                "",
+                padding='max_length',
+                truncation=True,
+                max_length=self.max_len,
+                return_tensors='pt'
+            )
+            self._text_cache[""] = {
+                'input_ids': enc['input_ids'].squeeze(0),
+                'attention_mask': enc['attention_mask'].squeeze(0)
+            }
+        
         # 👈 Only pre-compute historical ratings if needed
         if self.use_history and self._history_cache is not None:
             unique_users = self.df['reviewerID'].astype(str).unique()
             for user_id in tqdm(unique_users, desc="Caching user histories"):
                 self._history_cache[user_id] = self._compute_history_tensor(user_id)
-            print("Historical ratings cached")
+            print("✅ Historical ratings cached")
         else:
-            print("Skipping user history caching (not needed for this model)")
+            print("⏩ Skipping user history caching (not needed for this model)")
     
     def _compute_history_tensor(self, user_id: str) -> torch.Tensor:
         """Pre-compute historical ratings tensor for a user"""
@@ -106,7 +120,11 @@ class AmazonReviewDataset(Dataset):
         
         # Use cached data
         text = str(row.get('description', ""))
-        text_data = self._text_cache.get(text, self._text_cache[""])
+        # 👈 Safe fallback with default empty text encoding
+        text_data = self._text_cache.get(text, self._text_cache.get("", {
+            'input_ids': torch.zeros(self.max_len, dtype=torch.long),
+            'attention_mask': torch.zeros(self.max_len, dtype=torch.long)
+        }))
         
         img_tensor = self._image_cache.get(row['file_path'], torch.zeros(3, IMG_SIZE, IMG_SIZE))
         
