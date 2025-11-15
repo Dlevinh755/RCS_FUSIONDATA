@@ -66,12 +66,12 @@ class CAMRec(nn.Module):
         # 4) co-attention
         T, I, F = self.coattn(T0, I0)  # F: (B, proj_dim)
 
-        # 5) history (nếu có)
+        # # 5) history (nếu có)
         feats = [E, F]
-        if self.history_enc is not None and 'historical_ratings' in batch:
-            h = batch['historical_ratings']  # (B, H)
-            h_emb = self.history_enc(h)      # (B, 128)
-            feats.append(h_emb)
+        # if self.history_enc is not None and 'historical_ratings' in batch:
+        #     h = batch['historical_ratings']  # (B, H)
+        #     h_emb = self.history_enc(h)      # (B, 128)
+        #     feats.append(h_emb)
 
         V = torch.cat(feats, dim=1)
         yhat = self.pred_mlp(V).squeeze(1)
