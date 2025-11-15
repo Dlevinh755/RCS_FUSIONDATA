@@ -98,8 +98,7 @@ def load_amazonproduct_data(
         test_df = _prepare_split(raw_test, data_root=data_dir)
         df = pd.concat([train_df, val_df, test_df], ignore_index=True)
 
-    if df.empty:
-        raise ValueError("Dataset is empty after filtering invalid rows.")
+    print(df.shape)
 
     users = {u: i for i, u in enumerate(df["reviewerID"].astype(str).unique())}
     items = {a: i for i, a in enumerate(df["asin"].astype(str).unique())}
