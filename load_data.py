@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
-from datahelper import AmazonReviewDataset, filter_valid_rows
+from datahelper import AmazonReviewDataset
 from model.CAMRec.model import collate_fn
 
 def _any_image_exists(paths: pd.Series) -> bool:
@@ -74,11 +74,7 @@ def _prepare_split(df: pd.DataFrame, *, data_root: Optional[Path]) -> pd.DataFra
         result["description"] = result["description"].fillna("")
     else:
         result["description"] = ""
-    filtered = filter_valid_rows(result, check_images=_any_image_exists(result["file_path"]))
-    if filtered.empty and not result.empty:
-        print("Warning: no rows passed image validation; keeping rows without checking image files.")
-        filtered = filter_valid_rows(result, check_images=False)
-    return filtered
+    return result
 
 
 def load_amazonproduct_data(
@@ -100,12 +96,6 @@ def load_amazonproduct_data(
             df["description"] = df["description"].fillna("")
         else:
             df["description"] = ""
-
-        filtered_df = filter_valid_rows(df, check_images=_any_image_exists(df["file_path"]))
-        if filtered_df.empty and not df.empty:
-            print("Warning: no rows passed image validation; keeping rows without checking image files.")
-            filtered_df = filter_valid_rows(df, check_images=False)
-        df = filtered_df
         if df.empty:
             raise ValueError("Dataset is empty after filtering rows.")
 
