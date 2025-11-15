@@ -48,6 +48,6 @@ if __name__ == "__main__":
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--heads", type=int, default=4)
     parser.add_argument("--data_path", type=str, default=None, help="Path to the directory containing train.csv and images/")
-    parser.add_argument("--use_history", default=False, action='store_true', help="Whether to use user history for personalization")
+    parser.add_argument("--use_history", type=bool, default=False, help="Whether to use user history for personalization")
     args = parser.parse_args()
     main(args)
