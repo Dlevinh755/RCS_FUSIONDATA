@@ -160,3 +160,6 @@ class AmazonReviewDataset(Dataset):
                 hist_tensor[item_idx] = rating
 
         return hist_tensor
+
+    def __len__(self):
+        return len(self.df)
