@@ -27,7 +27,7 @@ def main(args):
             heads=args.heads,
             device=device,
         )
-    else:
+    elif args.model == "LightGNN":
     
         model, metrics = LightGNN_train(
             train_dl,
@@ -44,7 +44,8 @@ def main(args):
             device=device,
         )
 
-        raise ValueError(f"Unsupported model '{args.model}'.")
+    else:
+        raise ValueError(f"Model {args.model} not recognized.")
 
     print(f"Training complete. Test MAE={metrics[0]:.4f}, RMSE={metrics[1]:.4f}")
     model_path = "mlp_camrec_model.pth"
