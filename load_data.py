@@ -50,6 +50,15 @@ def _make_abs_path(path_value: Union[str, Path], root: Path) -> str:
         return ""
     path_obj = Path(path_str)
     if not path_obj.is_absolute():
+        candidates = [
+            (root / path_obj).resolve(),
+            (root.parent / path_obj).resolve(),
+            (Path(__file__).parent / path_obj).resolve(),
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+        # Fall back to root join even if it does not exist yet
         path_obj = (root / path_obj).resolve()
     return str(path_obj)
 

@@ -29,18 +29,23 @@ class AmazonReviewDataset(Dataset):
         self.item2idx = item2idx
         self.tok = tokenizer
         self.max_len = max_len
+        self._reported_missing_images = set()
 
     def _load_image_tensor(self, file_path: str) -> torch.Tensor:
         path = str(file_path).strip()
         if not Path(path).exists():
-            print(f"Image not found: {path}")
+            if path not in self._reported_missing_images:
+                print(f"Image not found: {path}")
+                self._reported_missing_images.add(path)
             return torch.zeros(3, IMG_SIZE, IMG_SIZE)
         try:
             with Image.open(path) as im:
                 im = im.convert('RGB')
                 return img_tf(im)
         except Exception as e:
-            print(f"Error loading image {path}: {e}")
+            if path not in self._reported_missing_images:
+                print(f"Error loading image {path}: {e}")
+                self._reported_missing_images.add(path)
             return torch.zeros(3, IMG_SIZE, IMG_SIZE)
 
     def __getitem__(self, idx):
