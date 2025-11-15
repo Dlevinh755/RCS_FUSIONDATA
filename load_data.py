@@ -77,7 +77,6 @@ def load_amazonproduct_data(
             df["description"] = df["description"].fillna("")
         else:
             df["description"] = ""
-        df = filter_valid_rows(df)
 
         train_df, temp_df = train_test_split(df, test_size=0.30, random_state=42, shuffle=True)
         val_df, test_df = train_test_split(temp_df, test_size=2 / 3, random_state=42, shuffle=True)
