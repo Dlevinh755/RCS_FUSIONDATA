@@ -30,17 +30,16 @@ class CAMRec(nn.Module):
 
         # ===== encoder cho history =====
         # history_dim chính là độ dài vector historical_ratings (số cột của pivot)
-        self.history_enc = None
-        if history_dim is not None:
-            self.history_enc = nn.Sequential(
-                nn.Linear(history_dim, 256),
-                nn.LeakyReLU(),
-                nn.Linear(256, 128),
-                nn.LeakyReLU(),
-            )
-            fused_in_dim = 256 + proj_dim# + 128
-        else:
-            fused_in_dim = 256 + proj_dim
+        fused_in_dim = 256 + proj_dim
+        # self.history_enc = None
+        # if history_dim is not None:
+        #     self.history_enc = nn.Sequential(
+        #         nn.Linear(history_dim, 256),
+        #         nn.LeakyReLU(),
+        #         nn.Linear(256, 128),
+        #         nn.LeakyReLU(),
+        #     )
+        #     fused_in_dim += 128
 
         # ===== predictor =====
         self.pred_mlp = nn.Sequential(
