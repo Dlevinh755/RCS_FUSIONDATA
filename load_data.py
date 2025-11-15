@@ -9,6 +9,16 @@ from transformers import AutoTokenizer
 from datahelper import AmazonReviewDataset, filter_valid_rows
 from model.CAMRec.model import collate_fn
 
+def _any_image_exists(paths: pd.Series) -> bool:
+    """Return True if at least one path in the series points to an existing image file."""
+    for raw_path in paths.dropna().astype(str).head(128):
+        path = raw_path.strip()
+        if not path:
+            continue
+        if Path(path).exists():
+            return True
+    return False
+
 
 def _resolve_dataset_dir(data_path: Optional[Union[str, Path]]) -> Path:
     """Resolve the directory that contains train/val/test splits."""
@@ -55,8 +65,11 @@ def _prepare_split(df: pd.DataFrame, *, data_root: Optional[Path]) -> pd.DataFra
         result["description"] = result["description"].fillna("")
     else:
         result["description"] = ""
-    result = filter_valid_rows(result)
-    return result
+    filtered = filter_valid_rows(result, check_images=_any_image_exists(result["file_path"]))
+    if filtered.empty and not result.empty:
+        print("Warning: no rows passed image validation; keeping rows without checking image files.")
+        filtered = filter_valid_rows(result, check_images=False)
+    return filtered
 
 
 def load_amazonproduct_data(
@@ -78,6 +91,14 @@ def load_amazonproduct_data(
         else:
             df["description"] = ""
 
+        filtered_df = filter_valid_rows(df, check_images=_any_image_exists(df["file_path"]))
+        if filtered_df.empty and not df.empty:
+            print("Warning: no rows passed image validation; keeping rows without checking image files.")
+            filtered_df = filter_valid_rows(df, check_images=False)
+        df = filtered_df
+        if df.empty:
+            raise ValueError("Dataset is empty after filtering rows.")
+
         train_df, temp_df = train_test_split(df, test_size=0.30, random_state=42, shuffle=True)
         val_df, test_df = train_test_split(temp_df, test_size=2 / 3, random_state=42, shuffle=True)
     else:
@@ -97,8 +118,11 @@ def load_amazonproduct_data(
         val_df = _prepare_split(raw_val, data_root=data_dir)
         test_df = _prepare_split(raw_test, data_root=data_dir)
         df = pd.concat([train_df, val_df, test_df], ignore_index=True)
-
-    print(df.shape)
+        if df.empty:
+            raise ValueError(
+                "Dataset splits contain no valid rows after preprocessing. "
+                "Ensure image files are available or disable image validation."
+            )
 
     users = {u: i for i, u in enumerate(df["reviewerID"].astype(str).unique())}
     items = {a: i for i, a in enumerate(df["asin"].astype(str).unique())}

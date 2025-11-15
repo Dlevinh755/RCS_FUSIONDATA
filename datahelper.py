@@ -123,24 +123,23 @@ class AmazonReviewDataset(Dataset):
 
         return hist_tensor
 
-def filter_valid_rows(df: pd.DataFrame) -> pd.DataFrame:
+def filter_valid_rows(df: pd.DataFrame, *, check_images: bool = True) -> pd.DataFrame:
     df = df.copy()
     df = df[df['description'].astype(str).str.strip().ne('')]
     df = df[df['file_path'].astype(str).str.strip().ne('')]
-    
-    # Kiểm tra file ảnh tồn tại
-    def image_exists(fp):
-        path_str = str(fp).strip()
-        if not path_str:
-            return False
-        return Path(path_str).exists()
-    
-    df = df[df['file_path'].apply(image_exists)]
-    
-    # Rating phải là số và nằm trong khoảng hợp lệ (thường 1-5)
+
+    if check_images:
+        def image_exists(fp):
+            path_str = str(fp).strip()
+            if not path_str:
+                return False
+            return Path(path_str).exists()
+
+        df = df[df['file_path'].apply(image_exists)]
+
     df['overall'] = pd.to_numeric(df['overall'], errors='coerce')
     df = df[df['overall'].notnull()]
-    df = df[(df['overall'] >= 1) & (df['overall'] <= 5)]  # Thêm validation range
-    
+    df = df[(df['overall'] >= 1) & (df['overall'] <= 5)]
+
     return df.reset_index(drop=True)
 
