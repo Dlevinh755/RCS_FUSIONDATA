@@ -4,8 +4,7 @@ import torch.nn as nn
 from attentionblock import CoAttentionBlock
 from text_model.roberta_model import TextEncoder
 from image_model.vgg19_model import ImageEncoder
-
-
+import torch.nn.functional as F
 
 class CAMRec(nn.Module):
     def __init__(self, n_users, n_items,

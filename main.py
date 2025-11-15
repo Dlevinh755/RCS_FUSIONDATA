@@ -2,7 +2,7 @@ import argparse
 import torch
 
 from load_data import load_data
-from model.__init__ import CAMRec_train
+from model.__init__ import CAMRec_train, LightGNN_train
 
 
 def main(args):
@@ -28,6 +28,22 @@ def main(args):
             device=device,
         )
     else:
+    
+        model, metrics = LightGNN_train(
+            train_dl,
+            val_dl,
+            test_dl,
+            users,
+            items,
+            full_pivot,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            epochs=args.epochs,
+            patience=args.patience,
+            heads=args.heads,
+            device=device,
+        )
+
         raise ValueError(f"Unsupported model '{args.model}'.")
 
     print(f"Training complete. Test MAE={metrics[0]:.4f}, RMSE={metrics[1]:.4f}")
