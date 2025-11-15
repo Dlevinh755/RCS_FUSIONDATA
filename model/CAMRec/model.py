@@ -49,29 +49,22 @@ class CAMRec(nn.Module):
         )
 
     def forward(self, batch):
-        # 1) user–item
+        # Disable gradient cho text và image encoders trong training
+        with torch.no_grad():
+            cls = self.text_enc(batch['input_ids'], batch['attention_mask'])
+            I4096 = self.img_enc(batch['image'])
+        
+        # Chỉ compute gradient cho phần cần thiết
         pu = self.user_emb(batch['user_idx'])
         qi = self.item_emb(batch['item_idx'])
-        E = self.ui_mlp(torch.cat([pu, qi], dim=1))  # (B,256)
-
-        # 2) text
-        cls = self.text_enc(batch['input_ids'], batch['attention_mask'])
-        T0 = self.text_proj(cls)  # (B, proj_dim)
-
-        # 3) image
-        I4096 = self.img_enc(batch['image'])
-        I0 = self.img_proj(I4096)
-
-        # 4) co-attention
-        T, I, F = self.coattn(T0, I0)  # F: (B, proj_dim)
-
-        # # 5) history (nếu có)
+        E = self.ui_mlp(torch.cat([pu, qi], dim=1))
+        
+        T0 = self.text_proj(cls.detach())  # Detach để tránh gradient
+        I0 = self.img_proj(I4096.detach())
+        
+        T, I, F = self.coattn(T0, I0)
+        
         feats = [E, F]
-        # if self.history_enc is not None and 'historical_ratings' in batch:
-        #     h = batch['historical_ratings']  # (B, H)
-        #     h_emb = self.history_enc(h)      # (B, 128)
-        #     feats.append(h_emb)
-
         V = torch.cat(feats, dim=1)
         yhat = self.pred_mlp(V).squeeze(1)
         return yhat

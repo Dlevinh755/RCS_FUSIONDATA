@@ -18,19 +18,65 @@ img_tf = transforms.Compose([
 class AmazonReviewDataset(Dataset):
     def __init__(self, df: pd.DataFrame, user2idx, item2idx, tokenizer, history_dim, max_len=128):
         self.df = df.reset_index(drop=True)
-
-        # tạo user-item rating matrix
         self.pivot_df = history_dim
-        
-        # Store the number of items for consistent history size
         self.n_items = len(item2idx)
-
         self.user2idx = user2idx
         self.item2idx = item2idx
         self.tok = tokenizer
         self.max_len = max_len
         self._reported_missing_images = set()
+        
+        self._image_cache = {}
+        self._text_cache = {}
+        self._history_cache = {}
+        
+        print("Pre-caching images and text...")
+        self._preload_data()
+    
+    def _preload_data(self):
 
+        from tqdm import tqdm
+        
+        # Cache unique images
+        unique_paths = self.df['file_path'].unique()
+        for path in tqdm(unique_paths, desc="Caching images"):
+            self._image_cache[path] = self._load_image_tensor_internal(path)
+        
+        # Cache unique texts  
+        unique_texts = self.df['description'].fillna("").astype(str).unique()
+        for text in tqdm(unique_texts, desc="Caching texts"):
+            if text not in self._text_cache:
+                enc = self.tok(
+                    text,
+                    padding='max_length',
+                    truncation=True,
+                    max_length=self.max_len,
+                    return_tensors='pt'
+                )
+                self._text_cache[text] = {
+                    'input_ids': enc['input_ids'].squeeze(0),
+                    'attention_mask': enc['attention_mask'].squeeze(0)
+                }
+        
+        # Pre-compute historical ratings
+        unique_users = self.df['reviewerID'].astype(str).unique()
+        for user_id in tqdm(unique_users, desc="Caching user histories"):
+            self._history_cache[user_id] = self._compute_history_tensor(user_id)
+    
+    def _compute_history_tensor(self, user_id: str) -> torch.Tensor:
+        """Pre-compute historical ratings tensor for a user"""
+        hist_tensor = torch.zeros(self.n_items, dtype=torch.float32)
+        
+        if user_id in self.pivot_df.index:
+            historical_ratings = self.pivot_df.loc[user_id].fillna(0.0)
+            # Vectorized operation instead of loop
+            for asin, rating in historical_ratings.items():
+                if asin in self.item2idx:
+                    item_idx = self.item2idx[asin]
+                    hist_tensor[item_idx] = rating
+        
+        return hist_tensor
+    
     def _load_image_tensor(self, file_path: str) -> torch.Tensor:
         path = str(file_path).strip()
         if not Path(path).exists():
@@ -54,55 +100,34 @@ class AmazonReviewDataset(Dataset):
         current_asin = str(row['asin'])
         uid = self.user2idx[user_id]
         iid = self.item2idx[current_asin]
-
-        # lấy history của đúng user này
+        
+        # 🚀 Use cached data
+        text = str(row.get('description', ""))
+        text_data = self._text_cache.get(text, self._text_cache[""])
+        
+        img_tensor = self._image_cache.get(row['file_path'], torch.zeros(3, IMG_SIZE, IMG_SIZE))
+        
+        # Get pre-computed history and mask current item
+        hist_tensor = self._history_cache[user_id].clone()
+        if current_asin in self.item2idx:
+            hist_tensor[self.item2idx[current_asin]] = 0.0
+        
         price_value = row.get('price', 0.0)
         try:
             price = float(price_value)
         except (TypeError, ValueError):
             price = 0.0
-        if user_id in self.pivot_df.index:
-            historical_ratings = self.pivot_df.loc[user_id].fillna(0.0).copy()
-        else:
-            historical_ratings = pd.Series(0.0, index=self.pivot_df.columns, dtype=float)
         
-        # Mask current item using ASIN, not index
-        if current_asin in historical_ratings.index:
-            historical_ratings.loc[current_asin] = 0.0
-         
-        # Create a fixed-size tensor for all items
-        hist_tensor = torch.zeros(self.n_items, dtype=torch.float32)
-        # Map the pivot columns to the correct item indices
-        for asin, rating in historical_ratings.items():
-            if asin in self.item2idx:
-                item_idx = self.item2idx[asin]
-                hist_tensor[item_idx] = rating
-
-        y = float(row['overall'])
-        text = str(row.get('description', ""))  # hoặc 'description'
-
-        enc = self.tok(
-            text,
-            padding='max_length',
-            truncation=True,
-            max_length=self.max_len,
-            return_tensors='pt'
-        )
-
-        img_tensor = self._load_image_tensor(row['file_path'])
-
-        sample = {
+        return {
             'user_idx': torch.tensor(uid, dtype=torch.long),
             'item_idx': torch.tensor(iid, dtype=torch.long),
-            'input_ids': enc['input_ids'].squeeze(0),
-            'attention_mask': enc['attention_mask'].squeeze(0),
-            
+            'input_ids': text_data['input_ids'],
+            'attention_mask': text_data['attention_mask'],
             'image': img_tensor,
-            'rating': torch.tensor(y, dtype=torch.float32),
+            'rating': torch.tensor(float(row['overall']), dtype=torch.float32),
             'historical_ratings': hist_tensor,
             'price': torch.tensor(price, dtype=torch.float32),
         }
-        return sample
 
     def __len__(self):
         return len(self.df)

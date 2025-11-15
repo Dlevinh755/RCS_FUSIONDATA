@@ -149,7 +149,8 @@ def load_amazonproduct_data(
     val_ds = AmazonReviewDataset(val_df, users, items, tokenizer, history_dim=full_pivot, max_len=128)
     test_ds = AmazonReviewDataset(test_df, users, items, tokenizer, history_dim=full_pivot, max_len=128)
 
-    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=num_workers)
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, 
+                     collate_fn=collate_fn, num_workers=4, pin_memory=True)
     val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
     test_dl = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
 

@@ -5,7 +5,7 @@ from tqdm.auto import tqdm
 from model.CAMRec.model import CAMRec
 
 
-def train(train_dl, val_dl, test_dl, users, items, full_pivot ,batch_size=16, lr=1e-3, epochs=50, patience=5, heads=4, device='cuda'):
+def train(train_dl, val_dl, test_dl, users, items, full_pivot, batch_size=16, lr=1e-3, epochs=50, patience=5, heads=4, device='cuda'):
     best_val = float('inf') 
     best_state = None 
     bad = 0 
@@ -24,6 +24,10 @@ def train(train_dl, val_dl, test_dl, users, items, full_pivot ,batch_size=16, lr
     optim = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=lr)
     loss_fn = nn.MSELoss()
     
+    # 🚀 Enable mixed precision training
+    from torch.cuda.amp import autocast, GradScaler
+    scaler = GradScaler()
+    
     for ep in range(epochs):
         model.train()
         tot = 0.0; n = 0
@@ -31,13 +35,19 @@ def train(train_dl, val_dl, test_dl, users, items, full_pivot ,batch_size=16, lr
         
         for batch in progress_bar:
             for k in batch:
-                batch[k] = batch[k].to(device)
+                batch[k] = batch[k].to(device, non_blocking=True)  # Non-blocking transfer
     
             optim.zero_grad()
-            yhat = model(batch)
-            loss = loss_fn(yhat, batch['rating'])
-            loss.backward()
-            optim.step()
+            
+            # Mixed precision forward pass
+            with autocast():
+                yhat = model(batch)
+                loss = loss_fn(yhat, batch['rating'])
+            
+            # Scaled backward pass
+            scaler.scale(loss).backward()
+            scaler.step(optim)
+            scaler.update()
             
             batch_size_curr = len(yhat)
             tot += loss.item() * batch_size_curr
