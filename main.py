@@ -1,30 +1,44 @@
-import torch
 import argparse
-import pandas as pd
-from pathlib import Path
-from train_mlp import trainmlp
+import torch
+
+from load_data import load_data
+from model.__init__ import CAMRec_train
 
 
 def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    if args.data_path:
-        df = pd.read_csv(args.data_path + "/full_data.csv",low_memory=False)
-        print(f"Data loaded from {args.data_path}, shape: {df.shape}")
-        print(df.columns)
-        
-        # Tạo đường dẫn tuyệt đối cho file ảnh
-        df["file_path"] = df["asin"].apply(lambda x: str(args.data_path + "/images/" + f"{x}.jpg"))
+    train_dl, val_dl, test_dl, users, items, full_pivot = load_data(
+        data_path=args.data_path,
+        data_type=args.dataset,
+        batch_size=args.batch_size,
+    )
+    if args.model == "CAMRec":
+        model, metrics = CAMRec_train(
+            train_dl,
+            val_dl,
+            test_dl,
+            users,
+            items,
+            full_pivot,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            epochs=args.epochs,
+            patience=args.patience,
+            heads=args.heads,
+            device=device,
+        )
     else:
-        print("No data path provided, using default dataset.")
-        df = None
-    model, metrics = trainmlp(df, batch_size=args.batch_size, lr=args.lr, epochs=args.epochs, patience=args.patience, heads=args.heads, device=device)
+        raise ValueError(f"Unsupported model '{args.model}'.")
+
+    print(f"Training complete. Test MAE={metrics[0]:.4f}, RMSE={metrics[1]:.4f}")
     model_path = "mlp_camrec_model.pth"
     torch.save(model.state_dict(), model_path)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--model", type=str, default="CAMRec")
+    parser.add_argument("--dataset", type=str, default="amazonproduct")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--patience", type=int, default=5)
