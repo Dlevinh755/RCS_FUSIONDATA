@@ -80,8 +80,8 @@ def collate_fn(batch: List[dict]):
         'attention_mask': torch.stack([b['attention_mask'] for b in batch]),
         'image': torch.stack([b['image'] for b in batch]),
         'rating': torch.stack([b['rating'] for b in batch]),
-        # history phải cùng chiều, Dataset của bạn đã trả về tensor 1D rồi
-        'historical_ratings': torch.stack([b['historical_ratings'] for b in batch]),
+        # # history phải cùng chiều, Dataset của bạn đã trả về tensor 1D rồi
+        # 'historical_ratings': torch.stack([b['historical_ratings'] for b in batch]),
     }
     return out
 

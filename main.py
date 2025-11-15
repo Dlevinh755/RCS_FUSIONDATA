@@ -7,49 +7,34 @@ from model.__init__ import CAMRec_train, LightGNN_train
 
 def main(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    use_history = False # (args.model == "CAMRec")
+    
     train_dl, val_dl, test_dl, users, items, full_pivot = load_data(
         data_path=args.data_path,
         data_type=args.dataset,
         batch_size=args.batch_size,
+        use_history=use_history,
     )
+    
     if args.model == "CAMRec":
         model, metrics = CAMRec_train(
-            train_dl,
-            val_dl,
-            test_dl,
-            users,
-            items,
-            full_pivot,
-            batch_size=args.batch_size,
-            lr=args.lr,
-            epochs=args.epochs,
-            patience=args.patience,
-            heads=args.heads,
-            device=device,
+            train_dl, val_dl, test_dl, users, items, full_pivot,
+            batch_size=args.batch_size, lr=args.lr, epochs=args.epochs,
+            patience=args.patience, heads=args.heads, device=device,
         )
+        model_path = "mlp_camrec_model.pth"
+        torch.save(model.state_dict(), model_path)
     elif args.model == "LightGNN":
-    
-        model, metrics = LightGNN_train(
-            train_dl,
-            val_dl,
-            test_dl,
-            users,
-            items,
-            full_pivot,
-            batch_size=args.batch_size,
-            lr=args.lr,
-            epochs=args.epochs,
-            patience=args.patience,
-            heads=args.heads,
-            device=device,
-        )
-
+        print("🚀 Running LightGNN with its own parameters...")
+        model, metrics = LightGNN_train()  # Uses hardcoded params
+        print(f"LightGNN training complete.")
+        # Note: LightGNN saves its own model internally if needed
+        return
     else:
         raise ValueError(f"Model {args.model} not recognized.")
 
     print(f"Training complete. Test MAE={metrics[0]:.4f}, RMSE={metrics[1]:.4f}")
-    model_path = "mlp_camrec_model.pth"
-    torch.save(model.state_dict(), model_path)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

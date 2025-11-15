@@ -16,7 +16,7 @@ img_tf = transforms.Compose([
 
 
 class AmazonReviewDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, user2idx, item2idx, tokenizer, history_dim, max_len=128):
+    def __init__(self, df: pd.DataFrame, user2idx, item2idx, tokenizer, history_dim, max_len=128, use_history=False):
         self.df = df.reset_index(drop=True)
         self.pivot_df = history_dim
         self.n_items = len(item2idx)
@@ -24,17 +24,17 @@ class AmazonReviewDataset(Dataset):
         self.item2idx = item2idx
         self.tok = tokenizer
         self.max_len = max_len
+        self.use_history = use_history
         self._reported_missing_images = set()
         
         self._image_cache = {}
         self._text_cache = {}
-        self._history_cache = {}
+        self._history_cache = {} if use_history else None 
         
         print("Pre-caching images and text...")
         self._preload_data()
     
     def _preload_data(self):
-
         from tqdm import tqdm
         
         # Cache unique images
@@ -58,10 +58,14 @@ class AmazonReviewDataset(Dataset):
                     'attention_mask': enc['attention_mask'].squeeze(0)
                 }
         
-        # Pre-compute historical ratings
-        unique_users = self.df['reviewerID'].astype(str).unique()
-        for user_id in tqdm(unique_users, desc="Caching user histories"):
-            self._history_cache[user_id] = self._compute_history_tensor(user_id)
+        # 👈 Only pre-compute historical ratings if needed
+        if self.use_history and self._history_cache is not None:
+            unique_users = self.df['reviewerID'].astype(str).unique()
+            for user_id in tqdm(unique_users, desc="Caching user histories"):
+                self._history_cache[user_id] = self._compute_history_tensor(user_id)
+            print("Historical ratings cached")
+        else:
+            print("Skipping user history caching (not needed for this model)")
     
     def _compute_history_tensor(self, user_id: str) -> torch.Tensor:
         """Pre-compute historical ratings tensor for a user"""
@@ -69,7 +73,6 @@ class AmazonReviewDataset(Dataset):
         
         if user_id in self.pivot_df.index:
             historical_ratings = self.pivot_df.loc[user_id].fillna(0.0)
-            # Vectorized operation instead of loop
             for asin, rating in historical_ratings.items():
                 if asin in self.item2idx:
                     item_idx = self.item2idx[asin]
@@ -101,16 +104,19 @@ class AmazonReviewDataset(Dataset):
         uid = self.user2idx[user_id]
         iid = self.item2idx[current_asin]
         
-        # 🚀 Use cached data
+        # Use cached data
         text = str(row.get('description', ""))
         text_data = self._text_cache.get(text, self._text_cache[""])
         
         img_tensor = self._image_cache.get(row['file_path'], torch.zeros(3, IMG_SIZE, IMG_SIZE))
         
-        # Get pre-computed history and mask current item
-        hist_tensor = self._history_cache[user_id].clone()
-        if current_asin in self.item2idx:
-            hist_tensor[self.item2idx[current_asin]] = 0.0
+        # 👈 Only compute history if needed
+        if self.use_history and self._history_cache is not None:
+            hist_tensor = self._history_cache[user_id].clone()
+            if current_asin in self.item2idx:
+                hist_tensor[self.item2idx[current_asin]] = 0.0
+        else:
+            hist_tensor = torch.zeros(self.n_items, dtype=torch.float32)  # Empty history
         
         price_value = row.get('price', 0.0)
         try:
@@ -129,15 +135,17 @@ class AmazonReviewDataset(Dataset):
             'price': torch.tensor(price, dtype=torch.float32),
         }
 
-    def __len__(self):
-        return len(self.df)
-    
     def get_user_history_tensor(self, user_id: str, current_asin: str = None) -> torch.Tensor:
         """Get historical ratings tensor for a specific user"""
+        if not self.use_history:
+            return torch.zeros(self.n_items, dtype=torch.float32)
+            
         user_id = str(user_id)
         current_asin = str(current_asin) if current_asin is not None else None
+        
         if user_id not in self.pivot_df.index:
             return torch.zeros(self.n_items, dtype=torch.float32)
+            
         historical_ratings = self.pivot_df.loc[user_id].fillna(0.0).copy()
 
         # Mask current item if provided
@@ -152,24 +160,3 @@ class AmazonReviewDataset(Dataset):
                 hist_tensor[item_idx] = rating
 
         return hist_tensor
-
-def filter_valid_rows(df: pd.DataFrame, *, check_images: bool = True) -> pd.DataFrame:
-    df = df.copy()
-    df = df[df['description'].astype(str).str.strip().ne('')]
-    df = df[df['file_path'].astype(str).str.strip().ne('')]
-
-    if check_images:
-        def image_exists(fp):
-            path_str = str(fp).strip()
-            if not path_str:
-                return False
-            return Path(path_str).exists()
-
-        df = df[df['file_path'].apply(image_exists)]
-
-    df['overall'] = pd.to_numeric(df['overall'], errors='coerce')
-    df = df[df['overall'].notnull()]
-    df = df[(df['overall'] >= 1) & (df['overall'] <= 5)]
-
-    return df.reset_index(drop=True)
-

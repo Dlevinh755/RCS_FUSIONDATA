@@ -86,6 +86,7 @@ def load_amazonproduct_data(
     *,
     batch_size: int = 16,
     num_workers: int = 0,
+    use_history: bool = True,  # 👈 New parameter
 ):
     """Create dataloaders for the Amazon product dataset."""
 
@@ -145,14 +146,22 @@ def load_amazonproduct_data(
         fill_value=0,
     ).astype(float)
 
-    train_ds = AmazonReviewDataset(train_df, users, items, tokenizer, history_dim=full_pivot, max_len=128)
-    val_ds = AmazonReviewDataset(val_df, users, items, tokenizer, history_dim=full_pivot, max_len=128)
-    test_ds = AmazonReviewDataset(test_df, users, items, tokenizer, history_dim=full_pivot, max_len=128)
+    train_ds = AmazonReviewDataset(train_df, users, items, tokenizer, 
+                                   history_dim=full_pivot, max_len=128, 
+                                   use_history=use_history)  # 👈 Pass flag
+    val_ds = AmazonReviewDataset(val_df, users, items, tokenizer, 
+                                 history_dim=full_pivot, max_len=128, 
+                                 use_history=use_history)
+    test_ds = AmazonReviewDataset(test_df, users, items, tokenizer, 
+                                  history_dim=full_pivot, max_len=128, 
+                                  use_history=use_history)
 
     train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, 
-                     collate_fn=collate_fn, num_workers=4, pin_memory=True)
-    val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
-    test_dl = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=num_workers)
+                         collate_fn=collate_fn, num_workers=4, pin_memory=True)
+    val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False, 
+                        collate_fn=collate_fn, num_workers=num_workers)
+    test_dl = DataLoader(test_ds, batch_size=batch_size, shuffle=False, 
+                         collate_fn=collate_fn, num_workers=num_workers)
 
     return train_dl, val_dl, test_dl, users, items, full_pivot
 
@@ -163,7 +172,10 @@ def load_data(
     data_type: str = "amazonproduct",
     batch_size: int = 16,
     num_workers: int = 0,
+    use_history: bool = True,  # 👈 New parameter
 ):
     if data_type == "amazonproduct":
-        return load_amazonproduct_data(data_path, batch_size=batch_size, num_workers=num_workers)
+        return load_amazonproduct_data(data_path, batch_size=batch_size, 
+                                       num_workers=num_workers, 
+                                       use_history=use_history)  # 👈 Pass flag
     raise ValueError(f"Unsupported data_type: {data_type}")
