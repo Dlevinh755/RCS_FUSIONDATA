@@ -38,7 +38,7 @@ class CAMRec(nn.Module):
                 nn.Linear(256, 128),
                 nn.LeakyReLU(),
             )
-            fused_in_dim = 256 + proj_dim + 128
+            fused_in_dim = 256 + proj_dim# + 128
         else:
             fused_in_dim = 256 + proj_dim
 
